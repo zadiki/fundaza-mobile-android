@@ -1,0 +1,15 @@
+<!-- Status-bar icon: the launcher's F-and-arrow glyph, in a single colour as Android requires. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="56"
+    android:viewportHeight="56">
+    <group android:translateX="-31" android:translateY="-26">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M38,30h34v9H48v10h17v9H48v20H38z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M60,49h8v-6l12,10.5 -12,10.5v-6h-8z" />
+    </group>
+</vector>

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Fundaza</string>
+    <string name="notification_channel_updates">Transfer updates</string>
+    <string name="notification_channel_updates_description">When a transfer moves, is paid out, or needs something from you</string>
+</resources>
