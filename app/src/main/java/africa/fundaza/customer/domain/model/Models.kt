@@ -62,7 +62,25 @@ data class Corridor(
     fun limitFor(currency: String): AmountLimit? = limits.firstOrNull { it.currency == currency }
 }
 
-data class Method(val code: String, val name: String)
+data class Method(
+    val code: String,
+    val name: String,
+    /** The send currencies this method takes; null means any the route does. */
+    val currencies: List<String>? = null,
+    /** False for a wallet that can't pay: empty, or not in this currency. */
+    val available: Boolean = true,
+    /** Wallet only: what is in it. */
+    val balance: Money? = null,
+) {
+    val isWallet: Boolean get() = code == WALLET
+
+    fun takes(currency: String?): Boolean = currencies == null || currency == null || currency in currencies
+
+    companion object {
+        const val WALLET = "WALLET"
+        const val MOBILE_MONEY = "MOBILE_MONEY"
+    }
+}
 
 data class CorridorMethods(val payment: List<Method>, val delivery: List<Method>)
 
@@ -264,7 +282,27 @@ data class Transfer(
 
 data class StatusStep(val status: TransferStatus, val note: String?, val changedAt: Instant?)
 
-data class TransferDetail(val transfer: Transfer, val history: List<StatusStep>)
+/** Where and how to pay a transfer that is still awaiting payment. */
+data class PayIn(
+    val method: String,
+    val label: String,
+    /** Paybill, till or bank account. */
+    val account: String,
+    /** What the customer must quote as the account number / reference. */
+    val reference: String,
+    val amount: Money,
+    val note: String,
+    val businessName: String?,
+) {
+    val isMobileMoney: Boolean get() = method == Method.MOBILE_MONEY
+}
+
+data class TransferDetail(
+    val transfer: Transfer,
+    val history: List<StatusStep>,
+    val paymentMethodCode: String? = null,
+    val payIn: PayIn? = null,
+)
 
 data class WalletMovement(
     val incoming: Boolean,

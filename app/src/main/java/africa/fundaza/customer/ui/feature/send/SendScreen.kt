@@ -1,5 +1,13 @@
 package africa.fundaza.customer.ui.feature.send
 
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import africa.fundaza.customer.domain.model.Method
 import africa.fundaza.customer.core.money.Money
 import africa.fundaza.customer.core.money.formatRate
 import africa.fundaza.customer.data.remote.prettyCode
@@ -184,7 +192,9 @@ fun SendScreen(
                 if (!imeVisible) Column(Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
                     if (state.step == SendStep.Review) {
                         PrimaryButton(
-                            text = state.quote?.let { "Send ${it.totalPayable.format()}" } ?: "Send",
+                            text = state.quote?.let {
+                                if (state.paysFromWallet) "Pay ${it.totalPayable.format()} from wallet" else "Send ${it.totalPayable.format()}"
+                            } ?: "Send",
                             onClick = viewModel::confirm,
                             enabled = state.canContinue,
                             loading = state.submitting,
@@ -232,6 +242,82 @@ fun SendScreen(
             }
         }
     }
+
+    if (state.passwordPrompt) {
+        WalletPasswordDialog(
+            amount = state.quote?.totalPayable?.format(),
+            submitting = state.submitting,
+            error = state.passwordError,
+            onConfirm = viewModel::confirmWithPassword,
+            onDismiss = viewModel::dismissPasswordPrompt,
+        )
+    }
+}
+
+/** What happens after sending, for the way to pay chosen — so nobody is surprised on the next screen. */
+private fun paymentHint(method: Method): String = when {
+    method.isWallet -> "Paid straight from your wallet. We'll ask for your password before it goes."
+    method.code == Method.MOBILE_MONEY -> "After you confirm, we'll send an M-Pesa prompt to your phone, or you can pay by paybill."
+    method.code == "BANK_TRANSFER" -> "After you confirm, we'll show the account and reference to pay into."
+    method.code == "CARD" -> "Card payment opens on the Fundaza website after you confirm."
+    else -> "After you confirm, we'll show you how to pay."
+}
+
+/** Paying from the wallet moves money at once, so the customer says their password again first. */
+@Composable
+private fun WalletPasswordDialog(
+    amount: String?,
+    submitting: Boolean,
+    error: String?,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var password by rememberSaveable { mutableStateOf("") }
+    var visible by rememberSaveable { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Outlined.Lock, contentDescription = null) },
+        title = { Text("Confirm with your password") },
+        text = {
+            Column {
+                Text(
+                    amount?.let { "$it will leave your wallet straight away. Enter your Fundaza password to confirm." }
+                        ?: "Enter your Fundaza password to pay from your wallet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    enabled = !submitting,
+                    isError = error != null,
+                    supportingText = error?.let { { Text(it) } },
+                    visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { onConfirm(password) }),
+                    trailingIcon = {
+                        IconButton(onClick = { visible = !visible }) {
+                            Icon(
+                                if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                contentDescription = if (visible) "Hide password" else "Show password",
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(password) }, enabled = !submitting && password.isNotBlank()) {
+                Text(if (submitting) "Paying…" else "Pay")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !submitting) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
@@ -342,14 +428,29 @@ private fun AmountStep(state: SendUiState, vm: SendViewModel) {
                     }
                 }
             }
-            if (methods.value.payment.isNotEmpty()) {
+            val payments = state.paymentChoices
+            if (payments.isNotEmpty()) {
                 Spacer(Modifier.height(20.dp))
                 Eyebrow("How you pay")
                 Spacer(Modifier.height(10.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    methods.value.payment.forEach { m ->
-                        ChoiceChip(m.name, selected = state.paymentMethod?.code == m.code, onClick = { vm.selectPaymentMethod(m) })
+                    payments.forEach { m ->
+                        ChoiceChip(
+                            text = m.name,
+                            selected = state.paymentMethod?.code == m.code,
+                            onClick = { vm.selectPaymentMethod(m) },
+                            enabled = m.available,
+                            detail = m.balance?.let { "Balance ${it.format()}" },
+                        )
                     }
+                }
+                state.paymentMethod?.let { chosen ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        paymentHint(chosen),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -848,6 +949,7 @@ private fun ReviewStep(state: SendUiState) {
         KeyValueRow("Recipient", person.fullName)
         KeyValueRow("Exchange rate", formatRate(quote.customerRate, quote.sendAmount.currency, quote.receiveAmount.currency), mono = true)
         state.paymentMethod?.let { KeyValueRow("You pay by", it.name) }
+        state.paymentMethod?.balance?.let { KeyValueRow("Wallet balance", it.format()) }
         state.purpose?.let { KeyValueRow("Reason", it.label) }
         if (state.documents.isNotEmpty()) KeyValueRow("Documents", "${state.documents.size} attached")
         if (quote.fastArrivalChosen) KeyValueRow("Fast arrival", "Yes")

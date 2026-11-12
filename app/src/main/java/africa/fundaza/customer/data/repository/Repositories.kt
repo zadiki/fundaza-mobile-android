@@ -61,9 +61,14 @@ interface TransferRepository {
         beneficiaryId: Long,
         purpose: SendingPurpose?,
         documentIds: List<Long>,
+        /** The customer's password; the server requires it when paying from the wallet. */
+        password: String? = null,
     ): ApiResult<Transfer>
     suspend fun transfers(): ApiResult<List<Transfer>>
     suspend fun transfer(reference: String): ApiResult<TransferDetail>
+
+    /** Sends an M-Pesa prompt to [phone] (else the customer's own number). Returns the number prompted. */
+    suspend fun startMpesa(reference: String, phone: String?): ApiResult<String>
 }
 
 interface DocumentRepository {

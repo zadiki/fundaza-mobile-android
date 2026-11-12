@@ -90,10 +90,19 @@ data class SendUiState(
     // Review
     val submitting: Boolean = false,
     val submitError: String? = null,
+    /** Paying from the wallet: the password sheet is open. */
+    val passwordPrompt: Boolean = false,
+    val passwordError: String? = null,
     /** The quote lapsed on the review screen and was priced again. */
     val repriced: Boolean = false,
 ) {
     val destination: String? get() = corridor?.destination?.iso2
+
+    /** Ways to pay that take the chosen send currency (M-Pesa takes KES only, for instance). */
+    val paymentChoices: List<Method>
+        get() = methods?.valueOrNull?.payment.orEmpty().filter { it.takes(sendCurrency) }
+
+    val paysFromWallet: Boolean get() = paymentMethod?.isWallet == true
 
     /** Routes out of the sender's country: the only choices offered. */
     val destinations: List<Corridor>
@@ -255,7 +264,7 @@ class SendViewModel @Inject constructor(
                 it.copy(
                     methods = result.toLoadState(),
                     deliveryMethod = methods?.delivery?.firstOrNull(),
-                    paymentMethod = methods?.payment?.firstOrNull(),
+                    paymentMethod = defaultPayment(methods?.payment.orEmpty(), it.sendCurrency),
                 )
             }
             reprice()
@@ -264,7 +273,15 @@ class SendViewModel @Inject constructor(
     }
 
     fun selectSendCurrency(code: String) {
-        _state.update { it.copy(sendCurrency = code, amountInput = if (it.amountEdited) it.amountInput else "") }
+        _state.update {
+            val payments = it.methods?.valueOrNull?.payment.orEmpty()
+            it.copy(
+                sendCurrency = code,
+                amountInput = if (it.amountEdited) it.amountInput else "",
+                // A way to pay that doesn't take this currency is no choice at all.
+                paymentMethod = it.paymentMethod?.takeIf { m -> m.takes(code) && m.available } ?: defaultPayment(payments, code),
+            )
+        }
         reprice()
         prefillAmount()
     }
@@ -280,6 +297,7 @@ class SendViewModel @Inject constructor(
     }
 
     fun selectPaymentMethod(method: Method) {
+        if (!method.available) return
         _state.update { it.copy(paymentMethod = method) }
         reprice()
     }
@@ -471,14 +489,39 @@ class SendViewModel @Inject constructor(
         return true
     }
 
+    /** Sends, or — paying from the wallet — first asks for the password. */
     fun confirm() {
+        val s = _state.value
+        if (s.step != SendStep.Review || !s.canContinue) return
+        if (s.paysFromWallet) {
+            _state.update { it.copy(passwordPrompt = true, passwordError = null) }
+            return
+        }
+        submit(password = null)
+    }
+
+    /** The wallet's money moves only once the customer has said their password again. */
+    fun confirmWithPassword(password: String) {
+        if (password.isBlank()) {
+            _state.update { it.copy(passwordError = "Enter your password.") }
+            return
+        }
+        submit(password)
+    }
+
+    fun dismissPasswordPrompt() {
+        if (_state.value.submitting) return
+        _state.update { it.copy(passwordPrompt = false, passwordError = null) }
+    }
+
+    private fun submit(password: String?) {
         val s = _state.value
         if (s.step != SendStep.Review || !s.canContinue) return
         val quote = s.quote ?: return
         val recipient = s.selectedRecipient?.first ?: return
 
         viewModelScope.launch {
-            _state.update { it.copy(submitting = true, submitError = null) }
+            _state.update { it.copy(submitting = true, submitError = null, passwordError = null) }
 
             if (quote.isExpired(clock.instant())) {
                 // Never send on a lapsed price: re-quote and let the customer look again.
@@ -491,6 +534,7 @@ class SendViewModel @Inject constructor(
                 _state.update {
                     it.copy(
                         submitting = false,
+                        passwordPrompt = false,
                         repriced = fresh is ApiResult.Success,
                         submitError = (fresh as? ApiResult.Failure)?.error?.message,
                     )
@@ -498,12 +542,22 @@ class SendViewModel @Inject constructor(
                 return@launch
             }
 
-            when (val result = transferRepository.create(quote.reference, recipient.id, s.purpose, s.documents.map { it.id })) {
+            when (val result = transferRepository.create(quote.reference, recipient.id, s.purpose, s.documents.map { it.id }, password)) {
                 is ApiResult.Success -> {
-                    _state.update { it.copy(submitting = false) }
+                    _state.update { it.copy(submitting = false, passwordPrompt = false) }
                     _events.send(SendEvent.Sent(result.value.reference))
                 }
-                is ApiResult.Failure -> _state.update { it.copy(submitting = false, submitError = result.error.message) }
+                is ApiResult.Failure -> {
+                    val passwordProblem = (result.error as? ApiError.Validation)?.firstErrorFor("password")
+                    _state.update {
+                        if (passwordProblem != null && it.passwordPrompt) {
+                            // Wrong password: keep the sheet open and say so there.
+                            it.copy(submitting = false, passwordError = passwordProblem)
+                        } else {
+                            it.copy(submitting = false, passwordPrompt = false, submitError = result.error.message)
+                        }
+                    }
+                }
             }
         }
     }
@@ -513,6 +567,15 @@ class SendViewModel @Inject constructor(
         const val USD = "USD"
         val DEFAULT_USD = BigDecimal("100")
         private val PROBE_AMOUNT = BigDecimal("1000")
+
+        /**
+         * What a route opens on: the first way to pay that takes [currency] and isn't the wallet
+         * (spending a balance is something the customer picks, never a default), else whatever can pay.
+         */
+        internal fun defaultPayment(methods: List<Method>, currency: String?): Method? {
+            val usable = methods.filter { it.takes(currency) && it.available }
+            return usable.firstOrNull { !it.isWallet } ?: usable.firstOrNull()
+        }
 
         /** Two significant figures, whole units: 723.4 → 720, 12,903 → 13,000. */
         internal fun friendlyAmount(raw: BigDecimal): BigDecimal {

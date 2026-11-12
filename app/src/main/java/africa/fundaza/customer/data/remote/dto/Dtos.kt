@@ -94,7 +94,16 @@ data class CorridorDto(
 )
 
 @Serializable
-data class MethodDto(val code: String, val name: String)
+data class MethodDto(
+    val code: String,
+    val name: String,
+    /** The send currencies this method takes; null means any the route does. */
+    val currencies: List<String>? = null,
+    /** Wallet only: whether the balance can pay. */
+    val available: Boolean = true,
+    /** Wallet only: what is in it, in the route's send currency. */
+    val balance: MoneyDto? = null,
+)
 
 @Serializable
 data class CorridorMethodsDto(
@@ -197,7 +206,28 @@ data class CreateTransactionDto(
     @SerialName("beneficiary_id") val beneficiaryId: Long,
     @SerialName("sending_purpose_code") val sendingPurposeCode: String? = null,
     @SerialName("document_ids") val documentIds: List<Long>? = null,
+    /** Required by the server when the quote is paid from the wallet. */
+    val password: String? = null,
 )
+
+/** Where and how to pay a transfer still awaiting payment. */
+@Serializable
+data class PayInDto(
+    val method: String,
+    val label: String,
+    val account: String,
+    val reference: String,
+    val amount: String,
+    val currency: String,
+    val note: String = "",
+    @SerialName("business_name") val businessName: String? = null,
+)
+
+@Serializable
+data class MpesaRequest(val phone: String? = null)
+
+@Serializable
+data class MpesaSessionDto(val phone: String, val stub: Boolean = false)
 
 @Serializable
 data class HistoryDto(
@@ -219,6 +249,8 @@ data class TransactionDto(
     @SerialName("transaction_date") val transactionDate: String? = null,
     val charges: List<ChargeDto> = emptyList(),
     val history: List<HistoryDto> = emptyList(),
+    @SerialName("payment_method_code") val paymentMethodCode: String? = null,
+    @SerialName("pay_in") val payIn: PayInDto? = null,
 )
 
 @Serializable

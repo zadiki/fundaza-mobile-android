@@ -10,6 +10,7 @@ import africa.fundaza.customer.data.remote.FundazaApi
 import africa.fundaza.customer.data.remote.dto.CreateBeneficiaryDto
 import africa.fundaza.customer.data.remote.dto.CreateTransactionDto
 import africa.fundaza.customer.data.remote.dto.DeviceRequest
+import africa.fundaza.customer.data.remote.dto.MpesaRequest
 import africa.fundaza.customer.data.remote.dto.QuoteRequestDto
 import africa.fundaza.customer.data.remote.dto.SaveInstrumentDto
 import africa.fundaza.customer.data.remote.toDetail
@@ -211,9 +212,10 @@ class TransferRepositoryImpl @Inject constructor(
         beneficiaryId: Long,
         purpose: SendingPurpose?,
         documentIds: List<Long>,
+        password: String?,
     ): ApiResult<Transfer> = call {
         api.createTransaction(
-            CreateTransactionDto(quoteReference, beneficiaryId, purpose?.name, documentIds.ifEmpty { null }),
+            CreateTransactionDto(quoteReference, beneficiaryId, purpose?.name, documentIds.ifEmpty { null }, password),
         ).data.toTransfer()
     }
 
@@ -222,6 +224,9 @@ class TransferRepositoryImpl @Inject constructor(
 
     override suspend fun transfer(reference: String): ApiResult<TransferDetail> =
         call { api.transaction(reference).data.toDetail() }
+
+    override suspend fun startMpesa(reference: String, phone: String?): ApiResult<String> =
+        call { api.startMpesa(reference, MpesaRequest(phone?.trim()?.ifEmpty { null })).data.phone }
 }
 
 @Singleton

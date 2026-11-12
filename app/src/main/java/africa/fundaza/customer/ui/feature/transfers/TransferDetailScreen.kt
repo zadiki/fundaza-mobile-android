@@ -1,5 +1,11 @@
 package africa.fundaza.customer.ui.feature.transfers
 
+import africa.fundaza.customer.domain.model.PayIn
+import africa.fundaza.customer.ui.components.PrimaryButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import africa.fundaza.customer.core.money.formatRate
 import africa.fundaza.customer.domain.model.StatusStep
 import africa.fundaza.customer.domain.model.StatusTone
@@ -85,6 +91,16 @@ fun TransferDetailScreen(
                         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
                     ) {
                         Content(detail.value, state.recipient?.fullName, justSent, onRecipient)
+                        detail.value.payIn?.takeIf { detail.value.transfer.status == TransferStatus.AWAITING_PAYMENT }?.let { payIn ->
+                            Spacer(Modifier.height(20.dp))
+                            HowToPay(
+                                payIn = payIn,
+                                state = state,
+                                onPhoneChange = viewModel::onMpesaPhoneChange,
+                                onPrompt = viewModel::startMpesa,
+                            )
+                        }
+                        TimelineSection(detail.value)
                     }
                 }
             }
@@ -101,7 +117,11 @@ private fun Content(detail: TransferDetail, recipientName: String?, justSent: Bo
     if (justSent && t.status == TransferStatus.AWAITING_PAYMENT) {
         Banner(
             title = "Transfer created",
-            text = "Now pay ${t.totalPayable.format()} so we can send it. We'll notify you when your payment is confirmed and again when it's paid out.",
+            text = if (detail.payIn != null) {
+                "Now pay ${t.totalPayable.format()} so we can send it — how to pay is below. We'll notify you when your payment is confirmed and again when it's paid out."
+            } else {
+                "Now pay ${t.totalPayable.format()} so we can send it. We'll notify you when your payment is confirmed and again when it's paid out."
+            },
             tone = BannerTone.Info,
             icon = Icons.Outlined.CheckCircle,
         )
@@ -139,7 +159,10 @@ private fun Content(detail: TransferDetail, recipientName: String?, justSent: Bo
         KeyValueRow("Exchange rate", formatRate(t.exchangeRate, t.sendAmount.currency, t.receiveAmount.currency), mono = true)
         t.date?.let { KeyValueRow("Date", it.toString(), mono = true) }
     }
+}
 
+@Composable
+private fun TimelineSection(detail: TransferDetail) {
     if (detail.history.isNotEmpty()) {
         Spacer(Modifier.height(28.dp))
         Eyebrow("What's happened")
@@ -202,6 +225,93 @@ private fun Timeline(steps: List<StatusStep>) {
                     Text(timeFormat.format(it), style = MonoStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+        }
+    }
+}
+
+/**
+ * Where and how to pay, while the transfer waits for it: the same slip the website shows.
+ * For M-Pesa the customer can also have the prompt sent straight to their phone.
+ */
+@Composable
+private fun HowToPay(
+    payIn: PayIn,
+    state: TransferDetailUiState,
+    onPhoneChange: (String) -> Unit,
+    onPrompt: () -> Unit,
+) {
+    Eyebrow("How to pay")
+    Spacer(Modifier.height(12.dp))
+    FCard {
+        Text(payIn.label, style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        if (payIn.isMobileMoney) {
+            CopyRow("Paybill number", payIn.account)
+            CopyRow("Account number", payIn.reference)
+        } else {
+            CopyRow("Pay into", payIn.account)
+            CopyRow("Reference", payIn.reference)
+        }
+        payIn.businessName?.let { KeyValueRow("Business name", it) }
+        KeyValueRow("Amount", payIn.amount.format(), strong = true)
+        if (payIn.note.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Text(payIn.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+
+    if (payIn.isMobileMoney) {
+        Spacer(Modifier.height(16.dp))
+        FCard {
+            Text("Or get an M-Pesa prompt", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "We'll ask Safaricom to show a payment request on your phone. Enter your M-Pesa PIN there to pay.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = state.mpesaPhone,
+                onValueChange = onPhoneChange,
+                label = { Text("M-Pesa number") },
+                placeholder = { Text("Leave blank to use your own") },
+                singleLine = true,
+                enabled = !state.prompting,
+                isError = state.promptError != null,
+                supportingText = state.promptError?.let { { Text(it) } },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            PrimaryButton(
+                text = if (state.promptedPhone == null) "Send M-Pesa prompt" else "Send the prompt again",
+                onClick = onPrompt,
+                loading = state.prompting,
+            )
+            state.promptedPhone?.let { phone ->
+                Spacer(Modifier.height(12.dp))
+                Banner(
+                    title = "Check your phone",
+                    text = "We've sent a payment request to $phone. Once you enter your PIN, this page updates by itself.",
+                    tone = BannerTone.Info,
+                    icon = Icons.Outlined.PhoneAndroid,
+                )
+            }
+        }
+    }
+}
+
+/** A label and a value the customer types somewhere else, so it can be copied. */
+@Composable
+private fun CopyRow(label: String, value: String) {
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Text(value, style = MonoStyle)
+        IconButton(onClick = { scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(label, value))) } }) {
+            Icon(Icons.Outlined.ContentCopy, "Copy $label", Modifier.size(16.dp))
         }
     }
 }

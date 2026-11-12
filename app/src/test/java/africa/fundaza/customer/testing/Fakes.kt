@@ -59,6 +59,9 @@ val CN_KE = Corridor(
 
 val MOBILE_MONEY = Method("MOBILE_MONEY", "Mobile money")
 val BANK_TRANSFER = Method("BANK_TRANSFER", "Bank transfer")
+val MPESA_PAYIN = Method("MOBILE_MONEY", "Mobile money", currencies = listOf("KES"))
+fun walletMethod(available: Boolean = true) =
+    Method("WALLET", "Wallet", available = available, balance = Money(BigDecimal("50000"), "CNY"))
 
 class FakeCorridorRepository(
     var corridors: List<Corridor> = listOf(CN_KE),
@@ -73,6 +76,9 @@ class FakeCorridorRepository(
 class FakeTransferRepository(private val clock: Clock) : TransferRepository {
     val quoteRequests = mutableListOf<QuoteRequest>()
     val created = mutableListOf<Triple<String, Long, SendingPurpose?>>()
+    val passwords = mutableListOf<String?>()
+    /** Only this password passes a wallet send; any other is refused on the field, as the server does. */
+    var walletPassword: String = "right password"
     var quoteFailure: ApiError? = null
     var createFailure: ApiError? = null
     /** Receive units per send unit, per (send, receive) currency pair; 17.82 otherwise. */
@@ -98,7 +104,19 @@ class FakeTransferRepository(private val clock: Clock) : TransferRepository {
         )
     }
 
-    override suspend fun create(quoteReference: String, beneficiaryId: Long, purpose: SendingPurpose?, documentIds: List<Long>): ApiResult<Transfer> {
+    override suspend fun create(
+        quoteReference: String,
+        beneficiaryId: Long,
+        purpose: SendingPurpose?,
+        documentIds: List<Long>,
+        password: String?,
+    ): ApiResult<Transfer> {
+        passwords += password
+        if (password != null && password != walletPassword) {
+            return ApiResult.Failure(
+                ApiError.Validation("That password is not right. Try again.", mapOf("password" to listOf("That password is not right. Try again."))),
+            )
+        }
         created += Triple(quoteReference, beneficiaryId, purpose)
         createFailure?.let { return ApiResult.Failure(it) }
         val money = Money(BigDecimal.ONE, "CNY")
@@ -107,6 +125,7 @@ class FakeTransferRepository(private val clock: Clock) : TransferRepository {
 
     override suspend fun transfers(): ApiResult<List<Transfer>> = ApiResult.Success(emptyList())
     override suspend fun transfer(reference: String): ApiResult<TransferDetail> = ApiResult.Failure(ApiError.NotFound())
+    override suspend fun startMpesa(reference: String, phone: String?): ApiResult<String> = ApiResult.Success(phone ?: "254700111222")
 }
 
 fun beneficiary(id: Long, name: String, vararg ways: BeneficiaryWay) =

@@ -10,6 +10,8 @@ import africa.fundaza.customer.data.remote.dto.CurrentUserDto
 import africa.fundaza.customer.data.remote.dto.CustomerDto
 import africa.fundaza.customer.data.remote.dto.DeviceRequest
 import africa.fundaza.customer.data.remote.dto.Envelope
+import africa.fundaza.customer.data.remote.dto.MpesaRequest
+import africa.fundaza.customer.data.remote.dto.MpesaSessionDto
 import africa.fundaza.customer.data.remote.dto.QuoteDto
 import africa.fundaza.customer.data.remote.dto.QuoteRequestDto
 import africa.fundaza.customer.data.remote.dto.SaveInstrumentDto
@@ -83,6 +85,10 @@ interface FundazaApi {
 
     @POST("api/v1/transactions")
     suspend fun createTransaction(@Body body: CreateTransactionDto): Envelope<TransactionDto>
+
+    /** Asks Safaricom to show an M-Pesa prompt on the customer's phone for this transfer. */
+    @POST("api/v1/transactions/{reference}/mpesa")
+    suspend fun startMpesa(@Path("reference") reference: String, @Body body: MpesaRequest): Envelope<MpesaSessionDto>
 
     @Multipart
     @POST("api/v1/documents")

@@ -1,5 +1,11 @@
 package africa.fundaza.customer.ui
 
+import africa.fundaza.customer.testing.walletMethod
+import africa.fundaza.customer.testing.MPESA_PAYIN
+import africa.fundaza.customer.testing.MOBILE_MONEY
+import africa.fundaza.customer.testing.BANK_TRANSFER
+import africa.fundaza.customer.domain.model.CorridorMethods
+import africa.fundaza.customer.domain.model.Method
 import africa.fundaza.customer.domain.model.SendingPurpose
 import africa.fundaza.customer.testing.FakeBeneficiaryRepository
 import africa.fundaza.customer.domain.model.Country
@@ -307,5 +313,93 @@ class SendViewModelTest {
 
         vm.onRecipientQueryChange("nobody")
         assertTrue(vm.state.value.shownReadyRecipients.isEmpty() && vm.state.value.shownRecipientsNeedingDetails.isEmpty())
+    }
+
+    private suspend fun kotlinx.coroutines.test.TestScope.onReviewPayingBy(vararg payment: Method): SendViewModel {
+        corridors.methods = CorridorMethods(payment = payment.toList(), delivery = listOf(MOBILE_MONEY))
+        val vm = viewModel()
+        advanceUntilIdle()
+        payment.firstOrNull { it.isWallet }?.let(vm::selectPaymentMethod)
+        vm.onAmountChange("25000"); advanceUntilIdle(); vm.next()
+        vm.selectRecipient(88); vm.next()
+        vm.selectPurpose(SendingPurpose.FAMILY_SUPPORT); vm.next()
+        assertEquals(SendStep.Review, vm.state.value.step)
+        return vm
+    }
+
+    @Test
+    fun `paying from the wallet asks for the password before anything is sent`() = runTest(main.dispatcher) {
+        val vm = onReviewPayingBy(BANK_TRANSFER, walletMethod())
+
+        vm.confirm()
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.passwordPrompt)
+        assertTrue(transfers.passwords.isEmpty())
+
+        vm.events.test {
+            vm.confirmWithPassword("right password")
+            advanceUntilIdle()
+            assertEquals(SendEvent.Sent("TXN-1"), awaitItem())
+        }
+        assertEquals(listOf<String?>("right password"), transfers.passwords)
+        assertFalse(vm.state.value.passwordPrompt)
+    }
+
+    @Test
+    fun `a wrong wallet password keeps the prompt open and says so there`() = runTest(main.dispatcher) {
+        val vm = onReviewPayingBy(BANK_TRANSFER, walletMethod())
+
+        vm.confirm()
+        vm.confirmWithPassword("wrong")
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.passwordPrompt)
+        assertEquals("That password is not right. Try again.", vm.state.value.passwordError)
+        assertNull(vm.state.value.submitError)
+        assertTrue(transfers.created.isEmpty())
+    }
+
+    @Test
+    fun `a send paid any other way asks for no password`() = runTest(main.dispatcher) {
+        val vm = onReviewPayingBy(BANK_TRANSFER, walletMethod())
+        vm.selectPaymentMethod(BANK_TRANSFER)
+        advanceUntilIdle() // a new way to pay is priced again first
+
+        vm.events.test {
+            vm.confirm()
+            advanceUntilIdle()
+            assertEquals(SendEvent.Sent("TXN-1"), awaitItem())
+        }
+        assertFalse(vm.state.value.passwordPrompt)
+        assertEquals(listOf<String?>(null), transfers.passwords)
+    }
+
+    @Test
+    fun `mobile money is offered for a shilling send and never chosen for another currency`() = runTest(main.dispatcher) {
+        locator.country = "KE"
+        corridors.corridors = listOf(keCn)
+        corridors.methods = CorridorMethods(payment = listOf(MPESA_PAYIN, BANK_TRANSFER, walletMethod()), delivery = listOf(MOBILE_MONEY))
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        assertEquals("MOBILE_MONEY", vm.state.value.paymentMethod?.code)
+        assertTrue(vm.state.value.paymentChoices.any { it.code == "MOBILE_MONEY" })
+
+        vm.selectSendCurrency("USD")
+        assertEquals("BANK_TRANSFER", vm.state.value.paymentMethod?.code)
+        assertFalse(vm.state.value.paymentChoices.any { it.code == "MOBILE_MONEY" })
+    }
+
+    @Test
+    fun `the wallet is never the default and an empty one cannot be chosen`() = runTest(main.dispatcher) {
+        val empty = walletMethod(available = false)
+        corridors.methods = CorridorMethods(payment = listOf(empty, BANK_TRANSFER), delivery = listOf(MOBILE_MONEY))
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        assertEquals("BANK_TRANSFER", vm.state.value.paymentMethod?.code)
+        vm.selectPaymentMethod(empty)
+        assertEquals("BANK_TRANSFER", vm.state.value.paymentMethod?.code)
     }
 }

@@ -28,6 +28,7 @@ import africa.fundaza.customer.domain.model.Kyc
 import africa.fundaza.customer.domain.model.Method
 import africa.fundaza.customer.domain.model.Quote
 import africa.fundaza.customer.domain.model.StatusStep
+import africa.fundaza.customer.domain.model.PayIn
 import africa.fundaza.customer.domain.model.Transfer
 import africa.fundaza.customer.domain.model.TransferDetail
 import africa.fundaza.customer.domain.model.TransferDocument
@@ -94,7 +95,7 @@ internal fun CorridorDto.toDomain(): Corridor {
 }
 
 internal fun CorridorMethodsDto.toDomain() = CorridorMethods(
-    payment = paymentMethods.map { Method(it.code, it.name) },
+    payment = paymentMethods.map { Method(it.code, it.name, it.currencies, it.available, it.balance?.toDomain()) },
     delivery = deliveryMethods.map { Method(it.code, it.name) },
 )
 
@@ -153,6 +154,18 @@ internal fun TransactionDto.toTransfer() = Transfer(
 internal fun TransactionDto.toDetail() = TransferDetail(
     transfer = toTransfer(),
     history = history.map { StatusStep(TransferStatus.from(it.toStatus), it.note, parseInstant(it.changedAt)) },
+    paymentMethodCode = paymentMethodCode,
+    payIn = payIn?.let {
+        PayIn(
+            method = it.method,
+            label = it.label,
+            account = it.account,
+            reference = it.reference,
+            amount = Money.parse(it.amount, it.currency),
+            note = it.note,
+            businessName = it.businessName,
+        )
+    },
 )
 
 internal fun TransferDocumentDto.toDomain() = TransferDocument(id, typeCode, typeName, fileName, status)

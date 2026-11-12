@@ -371,16 +371,31 @@ fun <T> SelectField(
 
 /** A tappable chip-like option used for methods and filters. */
 @Composable
-fun ChoiceChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun ChoiceChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    detail: String? = null,
+) {
     val scheme = MaterialTheme.colorScheme
-    Box(
+    val content = when {
+        selected -> scheme.onPrimary
+        enabled -> scheme.onSurface
+        else -> scheme.onSurface.copy(alpha = 0.4f)
+    }
+    Column(
         modifier
             .clip(RoundedCornerShape(12.dp))
             .background(if (selected) scheme.primary else scheme.surfaceContainerLowest)
-            .border(1.dp, if (selected) scheme.primary else scheme.outline, RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .border(1.dp, if (selected) scheme.primary else scheme.outline.copy(alpha = if (enabled) 1f else 0.4f), RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
-        Text(text, style = MaterialTheme.typography.labelMedium, color = if (selected) scheme.onPrimary else scheme.onSurface)
+        Text(text, style = MaterialTheme.typography.labelMedium, color = content)
+        if (detail != null) {
+            Text(detail, style = MaterialTheme.typography.labelSmall, color = content.copy(alpha = 0.75f))
+        }
     }
 }
