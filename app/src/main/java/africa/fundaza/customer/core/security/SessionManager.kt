@@ -2,6 +2,7 @@ package africa.fundaza.customer.core.security
 
 import africa.fundaza.customer.core.util.ApplicationScope
 import africa.fundaza.customer.domain.model.CurrentUser
+import africa.fundaza.customer.domain.model.SignUp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,7 +18,14 @@ sealed interface SessionState {
     /** [notice] explains why, when the app ended the session rather than the person. */
     data class SignedOut(val notice: String? = null) : SessionState
 
-    data class SignedIn(val user: CurrentUser) : SessionState
+    /** [justJoined] is set when this session began by finishing a sign-up, so the app opens verification. */
+    data class SignedIn(val user: CurrentUser, val justJoined: Boolean = false) : SessionState
+
+    /**
+     * A login with no customer behind it yet: it signed up and has not finished
+     * (confirm the email, perhaps the phone, then give their details).
+     */
+    data class SigningUp(val signUp: SignUp) : SessionState
 
     /** A stored token exists but the server couldn't be reached to confirm who it is. */
     data class Unreachable(val message: String) : SessionState
@@ -59,8 +67,12 @@ class SessionManager @Inject constructor(
         token = stored.token
     }
 
-    fun signedIn(user: CurrentUser) {
-        _state.value = SessionState.SignedIn(user)
+    fun signedIn(user: CurrentUser, justJoined: Boolean = false) {
+        _state.value = SessionState.SignedIn(user, justJoined)
+    }
+
+    fun signingUp(signUp: SignUp) {
+        _state.value = SessionState.SigningUp(signUp)
     }
 
     fun unreachable(message: String) {
@@ -81,7 +93,7 @@ class SessionManager @Inject constructor(
     fun onTokenRejected(rejected: String) {
         if (token != rejected) return
         token = null
-        val wasSignedIn = _state.value is SessionState.SignedIn
+        val wasSignedIn = _state.value is SessionState.SignedIn || _state.value is SessionState.SigningUp
         _state.value = SessionState.SignedOut(
             if (wasSignedIn) "Your session has ended. Please sign in again." else null,
         )

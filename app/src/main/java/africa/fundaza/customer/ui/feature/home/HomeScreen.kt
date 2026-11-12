@@ -36,7 +36,6 @@ import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -45,6 +44,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -70,11 +76,22 @@ fun HomeScreen(
     onWallet: () -> Unit,
     onTransfer: (String) -> Unit,
     onAllTransfers: () -> Unit,
-    onProfile: () -> Unit,
+    onVerify: () -> Unit,
     modifier: Modifier = Modifier,
+    onReady: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(state.loading) {
+        if (!state.loading) onReady()
+    }
+    // One shared pulse drives every placeholder, so the screen loads as one thing.
+    val pulse by rememberInfiniteTransition(label = "placeholder").animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.7f,
+        animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse),
+        label = "pulse",
+    )
 
     PullToRefreshBox(
         isRefreshing = state.refreshing,
@@ -82,11 +99,11 @@ fun HomeScreen(
         modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
     ) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-            item { Header(state, onSend, onWallet) }
+            item { Header(state, pulse, onSend, onWallet) }
 
             val customer = state.customer
             if (customer != null && !customer.kyc.verified) {
-                item { KycBanner(customer, onProfile) }
+                item { KycBanner(customer, onVerify) }
             }
 
             if (state.canViewTransfers) {
@@ -99,14 +116,14 @@ fun HomeScreen(
                         TextButton(onClick = onAllTransfers) { Text("See all") }
                     }
                 }
-                item { Recent(state, onTransfer, onSend) }
+                item { Recent(state, pulse, onTransfer, onSend) }
             }
         }
     }
 }
 
 @Composable
-private fun Header(state: HomeUiState, onSend: () -> Unit, onWallet: () -> Unit) {
+private fun Header(state: HomeUiState, pulse: Float, onSend: () -> Unit, onWallet: () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -134,17 +151,15 @@ private fun Header(state: HomeUiState, onSend: () -> Unit, onWallet: () -> Unit)
         val wallet = state.wallet
         if (wallet != null) {
             Spacer(Modifier.height(24.dp))
-            when (wallet) {
-                LoadState.Loading -> Box(Modifier.padding(horizontal = 24.dp).height(92.dp), contentAlignment = Alignment.CenterStart) {
-                    CircularProgressIndicator(color = MarigoldC, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                }
-                is LoadState.Failed -> Text(
+            when {
+                state.loading || wallet is LoadState.Loading -> BalancePlaceholder(pulse)
+                wallet is LoadState.Failed -> Text(
                     wallet.message,
                     color = PaperC.copy(alpha = 0.7f),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(horizontal = 24.dp),
                 )
-                is LoadState.Loaded -> Balances(wallet.value.balances, onWallet)
+                wallet is LoadState.Loaded -> Balances(wallet.value.balances, onWallet)
             }
         }
 
@@ -221,28 +236,38 @@ private fun BalanceTile(money: Money?, onClick: () -> Unit) {
 }
 
 @Composable
-private fun KycBanner(customer: Customer, onProfile: () -> Unit) {
-    val lapsed = customer.kyc.status == "VERIFIED"
+private fun KycBanner(customer: Customer, onVerify: () -> Unit) {
+    val status = customer.kyc.status
     Banner(
-        title = if (lapsed) "Your verification has expired" else "Verify your identity",
-        text = if (lapsed) {
-            "Renew it to keep sending. Visit a Fundaza agent with your ID."
-        } else {
-            "Larger transfers need a verified identity. Visit a Fundaza agent with your ID to complete it."
+        title = when (status) {
+            "VERIFIED", "EXPIRED" -> "Your verification has expired"
+            "PENDING" -> "We're checking your details"
+            "REJECTED" -> "We couldn't verify you"
+            else -> "Verify your identity"
+        },
+        text = when (status) {
+            "VERIFIED", "EXPIRED" -> "Send an in-date ID to keep sending. Tap to renew it."
+            "PENDING" -> "We'll tell you when it's done. Tap to see where it stands."
+            "REJECTED" -> "Tap to see what to do next."
+            else -> "Verify with your national ID or passport before you send. It takes a few minutes."
         },
         tone = BannerTone.Warning,
         icon = Icons.Outlined.VerifiedUser,
-        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp).clickable(onClick = onProfile),
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp).clickable(onClick = onVerify),
     )
 }
 
 @Composable
-private fun Recent(state: HomeUiState, onTransfer: (String) -> Unit, onSend: () -> Unit) {
+private fun Recent(state: HomeUiState, pulse: Float, onTransfer: (String) -> Unit, onSend: () -> Unit) {
     FCard(Modifier.padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 6.dp)) {
-        when (val recent = state.recent) {
-            LoadState.Loading -> Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+        val recent = state.recent
+        if (state.loading || recent is LoadState.Loading) {
+            repeat(3) { index ->
+                if (index > 0) HorizontalDivider(Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                TransferRowPlaceholder(pulse)
             }
+        } else when (recent) {
+            LoadState.Loading -> Unit
             is LoadState.Failed -> Text(
                 recent.message,
                 style = MaterialTheme.typography.bodyMedium,
@@ -278,6 +303,47 @@ private fun Recent(state: HomeUiState, onTransfer: (String) -> Unit, onSend: () 
             }
         }
     }
+}
+
+@Composable
+private fun BalancePlaceholder(pulse: Float) {
+    Column(
+        Modifier
+            .padding(horizontal = 24.dp)
+            .width(220.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(PaperC.copy(alpha = 0.08f))
+            .padding(16.dp),
+    ) {
+        Bone(PaperC, pulse * 0.4f, width = 90.dp, height = 12.dp)
+        Spacer(Modifier.height(14.dp))
+        Bone(PaperC, pulse * 0.4f, width = 140.dp, height = 28.dp)
+        Spacer(Modifier.height(8.dp))
+        Bone(PaperC, pulse * 0.4f, width = 100.dp, height = 12.dp)
+    }
+}
+
+@Composable
+private fun TransferRowPlaceholder(pulse: Float) {
+    val bone = MaterialTheme.colorScheme.outlineVariant
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(44.dp).clip(CircleShape).background(bone.copy(alpha = pulse)))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Bone(bone, pulse, width = 130.dp, height = 14.dp)
+            Spacer(Modifier.height(8.dp))
+            Bone(bone, pulse, width = 80.dp, height = 12.dp)
+        }
+        Bone(bone, pulse, width = 64.dp, height = 14.dp)
+    }
+}
+
+@Composable
+private fun Bone(color: Color, alpha: Float, width: Dp, height: Dp) {
+    Box(Modifier.width(width).height(height).clip(RoundedCornerShape(6.dp)).background(color.copy(alpha = alpha)))
 }
 
 private fun greeting(): String = when (LocalTime.now().hour) {

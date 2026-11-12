@@ -3,6 +3,7 @@ package africa.fundaza.customer.ui.feature.auth
 import africa.fundaza.customer.ui.components.Banner
 import africa.fundaza.customer.ui.components.BannerTone
 import africa.fundaza.customer.ui.components.PrimaryButton
+import africa.fundaza.customer.ui.components.SecondaryButton
 import africa.fundaza.customer.ui.theme.Bricolage
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -71,7 +72,7 @@ private val MarigoldC = Color(0xFFF2A93B)
 private val PaperC = Color(0xFFF6F1E7)
 
 @Composable
-fun LoginScreen(notice: String?, viewModel: LoginViewModel = hiltViewModel()) {
+fun LoginScreen(notice: String?, onRegister: () -> Unit, viewModel: LoginViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val focus = LocalFocusManager.current
     var showPassword by rememberSaveable { mutableStateOf(false) }
@@ -195,11 +196,7 @@ fun LoginScreen(notice: String?, viewModel: LoginViewModel = hiltViewModel()) {
                         },
                     )
                     Spacer(Modifier.height(20.dp))
-                    Text(
-                        "New to Fundaza? Register at any Fundaza agent or on fundaza.africa, then sign in here with the same details.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    SecondaryButton(text = "New to Fundaza? Create an account", onClick = onRegister)
                 }
             }
         }

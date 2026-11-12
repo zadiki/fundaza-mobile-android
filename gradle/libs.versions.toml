@@ -19,6 +19,7 @@ junit = "4.13.2"
 turbine = "1.2.1"
 firebaseBom = "33.16.0"
 googleServices = "4.4.3"
+sumsub = "1.47.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -52,6 +53,9 @@ kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-t
 
 firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
 firebase-messaging = { module = "com.google.firebase:firebase-messaging" }
+
+# Identity verification: the provider's own capture screens (document + selfie).
+sumsub-mobile-sdk = { module = "com.sumsub.sns:idensic-mobile-sdk", version.ref = "sumsub" }
 
 junit = { module = "junit:junit", version.ref = "junit" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }

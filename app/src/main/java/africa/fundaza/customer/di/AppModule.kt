@@ -13,6 +13,10 @@ import africa.fundaza.customer.core.security.KeystoreTokenStore
 import africa.fundaza.customer.core.security.TokenStore
 import africa.fundaza.customer.core.util.ApplicationScope
 import africa.fundaza.customer.data.remote.FundazaApi
+import africa.fundaza.customer.data.repository.KycRepository
+import africa.fundaza.customer.data.repository.KycRepositoryImpl
+import africa.fundaza.customer.data.repository.SignUpRepository
+import africa.fundaza.customer.data.repository.SignUpRepositoryImpl
 import africa.fundaza.customer.data.repository.AuthRepository
 import africa.fundaza.customer.data.repository.AuthRepositoryImpl
 import africa.fundaza.customer.data.repository.BeneficiaryRepository
@@ -107,6 +111,8 @@ abstract class RepositoryModule {
     @Binds abstract fun transfers(impl: TransferRepositoryImpl): TransferRepository
     @Binds abstract fun documents(impl: DocumentRepositoryImpl): DocumentRepository
     @Binds abstract fun wallet(impl: WalletRepositoryImpl): WalletRepository
+    @Binds abstract fun signUps(impl: SignUpRepositoryImpl): SignUpRepository
+    @Binds abstract fun kyc(impl: KycRepositoryImpl): KycRepository
     @Binds abstract fun devices(impl: DeviceRepositoryImpl): DeviceRepository
     @Binds abstract fun pushTokens(impl: FirebasePushTokenSource): PushTokenSource
     @Binds abstract fun countryLocator(impl: DeviceCountryLocator): CountryLocator

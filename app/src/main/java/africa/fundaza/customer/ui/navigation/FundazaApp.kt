@@ -2,8 +2,12 @@ package africa.fundaza.customer.ui.navigation
 
 import africa.fundaza.customer.core.security.SessionState
 import africa.fundaza.customer.ui.AppViewModel
+import africa.fundaza.customer.ui.SplashScreen
 import africa.fundaza.customer.ui.components.MessageState
 import africa.fundaza.customer.ui.feature.auth.LoginScreen
+import africa.fundaza.customer.ui.feature.signup.RegisterScreen
+import africa.fundaza.customer.ui.feature.signup.SignUpStepsScreen
+import africa.fundaza.customer.ui.feature.verification.VerificationScreen
 import africa.fundaza.customer.ui.feature.home.HomeScreen
 import africa.fundaza.customer.ui.feature.profile.ProfileScreen
 import africa.fundaza.customer.ui.feature.recipients.AddRecipientScreen
@@ -19,6 +23,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -50,6 +55,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -66,6 +72,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import kotlinx.coroutines.delay
 import kotlin.reflect.KClass
 
 private data class Tab(
@@ -83,30 +90,82 @@ private val tabs = listOf(
     Tab(ProfileRoute, ProfileRoute::class, "Profile", Icons.Outlined.Person, Icons.Filled.Person),
 )
 
+/** The splash stays at least this long, so it reads as a moment rather than a flicker. */
+private const val SPLASH_MIN_MILLIS = 900L
+
+/** How long the splash waits for home's data on a signed-in launch before home shows its own placeholders. */
+private const val SPLASH_HOME_WAIT_MILLIS = 4_000L
+
 @Composable
 fun FundazaApp(appViewModel: AppViewModel) {
     val session by appViewModel.sessionState.collectAsStateWithLifecycle()
+    val signedIn = session is SessionState.SignedIn
 
-    when (val s = session) {
-        // The splash screen covers this.
-        SessionState.Restoring -> Box(Modifier.fillMaxSize())
-        is SessionState.Unreachable -> MessageState(
-            icon = Icons.Outlined.CloudOff,
-            title = "Can't reach Fundaza",
-            body = s.message,
-            actionLabel = "Try again",
-            onAction = appViewModel::restore,
-        )
-        else -> SignedInOrOut(s, appViewModel)
+    // Once the opening splash has gone it stays gone (except while a retry restores the session).
+    var introDone by rememberSaveable { mutableStateOf(false) }
+    var minElapsed by remember { mutableStateOf(false) }
+    var homeReady by remember { mutableStateOf(false) }
+    var homeWaitOver by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        delay(SPLASH_MIN_MILLIS)
+        minElapsed = true
+    }
+    LaunchedEffect(signedIn) {
+        if (signedIn) {
+            delay(SPLASH_HOME_WAIT_MILLIS)
+            homeWaitOver = true
+        }
+    }
+
+    val restoring = session is SessionState.Restoring
+    val holdIntro = !introDone && (restoring || !minElapsed || (signedIn && !homeReady && !homeWaitOver))
+    LaunchedEffect(holdIntro) {
+        if (!holdIntro) introDone = true
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        when (val s = session) {
+            // Covered by the splash.
+            SessionState.Restoring -> Box(Modifier.fillMaxSize())
+            is SessionState.Unreachable -> MessageState(
+                icon = Icons.Outlined.CloudOff,
+                title = "Can't reach Fundaza",
+                body = s.message,
+                actionLabel = "Try again",
+                onAction = appViewModel::restore,
+            )
+            // Signed up but not finished: confirm email/phone, then their details.
+            is SessionState.SigningUp -> SignUpStepsScreen(s.signUp, onSignOut = appViewModel::signOut)
+            // Home loads underneath the splash, so a signed-in launch opens straight onto a full screen.
+            else -> SignedInOrOut(s, appViewModel, onHomeReady = { homeReady = true })
+        }
+
+        AnimatedVisibility(
+            visible = holdIntro || restoring,
+            enter = fadeIn(),
+            exit = fadeOut(tween(350)),
+        ) {
+            SplashScreen()
+        }
     }
 }
 
 @Composable
-private fun SignedInOrOut(session: SessionState, appViewModel: AppViewModel) {
+private fun SignedInOrOut(session: SessionState, appViewModel: AppViewModel, onHomeReady: () -> Unit) {
     val nav = rememberNavController()
     val signedIn = session is SessionState.SignedIn
 
     if (signedIn) AskForNotifications()
+
+    // Straight from finishing sign-up: the next thing to do is verify, so open it once.
+    var openedVerification by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(session) {
+        if ((session as? SessionState.SignedIn)?.justJoined == true && !openedVerification) {
+            openedVerification = true
+            nav.navigate(VerificationRoute)
+        }
+    }
 
     // Follow the session wherever it changes: sign-in, sign-out, or a token the server stopped accepting.
     LaunchedEffect(signedIn) {
@@ -153,6 +212,7 @@ private fun SignedInOrOut(session: SessionState, appViewModel: AppViewModel) {
             notice = (session as? SessionState.SignedOut)?.notice,
             bottomPadding = padding,
             onSignOut = appViewModel::signOut,
+            onHomeReady = onHomeReady,
         )
     }
 }
@@ -172,6 +232,7 @@ private fun FundazaNavHost(
     notice: String?,
     bottomPadding: PaddingValues,
     onSignOut: () -> Unit,
+    onHomeReady: () -> Unit,
 ) {
     // Tab screens sit above the bottom bar; pushed screens own the whole window.
     val tabPadding = Modifier.padding(bottom = bottomPadding.calculateBottomPadding())
@@ -183,7 +244,8 @@ private fun FundazaNavHost(
         popEnterTransition = { fadeIn() },
         popExitTransition = { slideOutHorizontally { it / 4 } + fadeOut() },
     ) {
-        composable<LoginRoute> { LoginScreen(notice = notice) }
+        composable<LoginRoute> { LoginScreen(notice = notice, onRegister = { nav.navigate(RegisterRoute) }) }
+        composable<RegisterRoute> { RegisterScreen(onBack = { nav.popBackStack() }) }
 
         composable<HomeRoute>(enterTransition = { fadeIn() }) {
             HomeScreen(
@@ -192,7 +254,8 @@ private fun FundazaNavHost(
                 onWallet = { nav.navigate(WalletRoute) },
                 onTransfer = { nav.navigate(TransferDetailRoute(it)) },
                 onAllTransfers = { nav.switchTab(TransfersRoute) },
-                onProfile = { nav.switchTab(ProfileRoute) },
+                onVerify = { nav.navigate(VerificationRoute) },
+                onReady = onHomeReady,
             )
         }
         composable<TransfersRoute>(enterTransition = { fadeIn() }) {
@@ -210,7 +273,7 @@ private fun FundazaNavHost(
             )
         }
         composable<ProfileRoute>(enterTransition = { fadeIn() }) {
-            ProfileScreen(modifier = tabPadding, onSignOut = onSignOut)
+            ProfileScreen(modifier = tabPadding, onSignOut = onSignOut, onVerify = { nav.navigate(VerificationRoute) })
         }
 
         composable<SendRoute> { entry ->
@@ -229,6 +292,7 @@ private fun FundazaNavHost(
                 },
             )
         }
+        composable<VerificationRoute> { VerificationScreen(onBack = { nav.popBackStack() }) }
         composable<WalletRoute> {
             WalletScreen(onBack = { nav.popBackStack() }, onTransfer = { nav.navigate(TransferDetailRoute(it)) })
         }

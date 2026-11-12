@@ -286,3 +286,97 @@ data class WalletDto(
 
 @Serializable
 data class DeviceRequest(val token: String, val platform: String = "ANDROID")
+
+// --- sign-up --------------------------------------------------------------
+
+@Serializable
+data class SignUpRequest(
+    @SerialName("full_name") val fullName: String,
+    val email: String,
+    val phone: String,
+    @SerialName("residence_iso2") val residenceIso2: String,
+    val password: String,
+    @SerialName("password_confirmation") val passwordConfirmation: String,
+    @SerialName("device_name") val deviceName: String,
+)
+
+@Serializable
+data class SignUpDto(
+    @SerialName("full_name") val fullName: String = "",
+    val email: String = "",
+    val phone: String = "",
+    @SerialName("residence_iso2") val residenceIso2: String = "",
+    @SerialName("email_verified") val emailVerified: Boolean = false,
+    @SerialName("phone_verification_required") val phoneVerificationRequired: Boolean = false,
+    @SerialName("phone_verified") val phoneVerified: Boolean = false,
+    @SerialName("next_step") val nextStep: String = "EMAIL",
+)
+
+@Serializable
+data class SignedUpDto(
+    val token: String,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    @SerialName("sign_up") val signUp: SignUpDto,
+)
+
+@Serializable
+data class PhoneCodeRequest(val code: String)
+
+@Serializable
+data class IndividualDetailsRequest(
+    @SerialName("first_name") val firstName: String,
+    @SerialName("last_name") val lastName: String,
+    @SerialName("date_of_birth") val dateOfBirth: String,
+    @SerialName("nationality_iso2") val nationalityIso2: String,
+    @SerialName("address_line1") val addressLine1: String? = null,
+    @SerialName("address_city") val addressCity: String? = null,
+)
+
+@Serializable
+data class CountryOptionDto(
+    val iso2: String,
+    val name: String,
+    @SerialName("dial_code") val dialCode: String = "",
+)
+
+// --- verification -----------------------------------------------------------
+
+@Serializable
+data class KycRestartDto(
+    val reason: String,
+    @SerialName("attempts_left") val attemptsLeft: Int? = null,
+)
+
+@Serializable
+data class KycDocumentDto(
+    val id: Long,
+    @SerialName("type_code") val typeCode: String,
+    @SerialName("type_name") val typeName: String,
+    @SerialName("issuing_country_iso2") val issuingCountryIso2: String? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
+)
+
+@Serializable
+data class KycDocumentTypeDto(val code: String, val name: String)
+
+@Serializable
+data class KycStateDto(
+    val status: String = "UNVERIFIED",
+    val verified: Boolean = false,
+    val tier: String? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    val mode: String = "DOCUMENTS",
+    @SerialName("can_start_verification") val canStartVerification: Boolean = false,
+    @SerialName("can_add_identity") val canAddIdentity: Boolean = false,
+    @SerialName("can_submit") val canSubmit: Boolean = false,
+    val restart: KycRestartDto? = null,
+    val documents: List<KycDocumentDto> = emptyList(),
+    @SerialName("document_types") val documentTypes: List<KycDocumentTypeDto> = emptyList(),
+)
+
+@Serializable
+data class KycSessionDto(
+    val token: String,
+    val level: String = "",
+    @SerialName("expires_in") val expiresIn: Int = 600,
+)

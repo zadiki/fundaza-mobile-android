@@ -313,3 +313,80 @@ data class WalletMovement(
 )
 
 data class Wallet(val balances: List<Money>, val movements: List<WalletMovement>)
+
+// --- sign-up and verification ----------------------------------------------
+
+/** What an unfinished sign-up is waiting for, as the server decides it. */
+enum class SignUpStep { EMAIL, PHONE, DETAILS }
+
+data class SignUp(
+    val fullName: String,
+    val email: String,
+    val phone: String,
+    val residenceIso2: String,
+    val emailVerified: Boolean,
+    val phoneVerificationRequired: Boolean,
+    val phoneVerified: Boolean,
+    val nextStep: SignUpStep,
+)
+
+data class CountryOption(val iso2: String, val name: String, val dialCode: String)
+
+data class NewSignUp(
+    val fullName: String,
+    val email: String,
+    val phone: String,
+    val residenceIso2: String,
+    val password: String,
+    val passwordConfirmation: String,
+)
+
+data class IndividualDetails(
+    val firstName: String,
+    val lastName: String,
+    val dateOfBirth: LocalDate,
+    val nationalityIso2: String,
+    val addressLine1: String?,
+    val addressCity: String?,
+)
+
+/** HOSTED: the provider's SDK captures the ID and selfie. DOCUMENTS: the customer uploads an ID here. */
+enum class KycMode { HOSTED, DOCUMENTS }
+
+data class KycDocument(
+    val id: Long,
+    val typeCode: String,
+    val typeName: String,
+    val issuingCountryIso2: String?,
+    val expiresAt: LocalDate?,
+)
+
+data class KycDocumentType(val code: String, val name: String)
+
+/** Why the customer must start verification again before sending anything new. */
+data class KycRestart(val rejected: Boolean, val attemptsLeft: Int?)
+
+/** The verification screen's state. Never carries screening results — the server never sends them. */
+data class KycState(
+    val status: String,
+    val verified: Boolean,
+    val tier: String?,
+    val expiresAt: LocalDate?,
+    val mode: KycMode,
+    val canStartVerification: Boolean,
+    val canAddIdentity: Boolean,
+    val canSubmit: Boolean,
+    val restart: KycRestart?,
+    val documents: List<KycDocument>,
+    val documentTypes: List<KycDocumentType>,
+) {
+    val pending: Boolean get() = status == "PENDING"
+}
+
+data class NewIdentityDocument(
+    val typeCode: String,
+    val number: String,
+    val issuingCountryIso2: String,
+    val expiresAt: LocalDate,
+    val contentUri: String,
+)

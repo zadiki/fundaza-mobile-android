@@ -3,6 +3,7 @@ package africa.fundaza.customer.ui.navigation
 import kotlinx.serialization.Serializable
 
 @Serializable data object LoginRoute
+@Serializable data object RegisterRoute
 
 // Tabs
 @Serializable data object HomeRoute
@@ -13,6 +14,7 @@ import kotlinx.serialization.Serializable
 // Pushed screens
 @Serializable data object SendRoute
 @Serializable data object WalletRoute
+@Serializable data object VerificationRoute
 @Serializable data class TransferDetailRoute(val reference: String, val justSent: Boolean = false)
 @Serializable data class RecipientDetailRoute(val id: Long)
 

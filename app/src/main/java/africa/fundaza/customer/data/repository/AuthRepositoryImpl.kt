@@ -27,8 +27,11 @@ class AuthRepositoryImpl @Inject constructor(
             return
         }
         when (val result = call { api.me().data.toDomain() }) {
-            is ApiResult.Success ->
-                if (result.value.isCustomer) session.signedIn(result.value) else session.end()
+            is ApiResult.Success -> when {
+                result.value.isCustomer -> session.signedIn(result.value)
+                result.value.principalType == null -> resumeSignUp(onNone = { session.end() })
+                else -> session.end()
+            }
             is ApiResult.Failure -> when (result.error) {
                 // The interceptor has already ended the session.
                 is ApiError.Unauthenticated -> Unit
@@ -55,6 +58,9 @@ class AuthRepositoryImpl @Inject constructor(
                 if (me.value.isCustomer) {
                     session.signedIn(me.value)
                     ApiResult.Success(SignInResult.SignedIn(me.value))
+                } else if (me.value.principalType == null && resumeSignUp(onNone = {})) {
+                    // Signed up on this or another device and not finished: pick up where they left off.
+                    ApiResult.Success(SignInResult.SigningUp)
                 } else {
                     // Don't leave a staff or agent token lying on a customer app.
                     call { api.revokeCurrentToken() }
@@ -77,8 +83,30 @@ class AuthRepositoryImpl @Inject constructor(
         return result
     }
 
+    /**
+     * A login with no principal is either somebody mid-sign-up or an account
+     * nobody has provisioned. Returns true when it was a sign-up and the
+     * session now follows it. A network failure leaves the app "unreachable"
+     * with the token kept, as for any other launch.
+     */
+    private suspend fun resumeSignUp(onNone: suspend () -> Unit): Boolean =
+        when (val signUp = call { api.currentSignUp().data.toDomain() }) {
+            is ApiResult.Success -> {
+                session.signingUp(signUp.value)
+                true
+            }
+            is ApiResult.Failure -> {
+                when (signUp.error) {
+                    is ApiError.NotFound -> onNone()
+                    is ApiError.Unauthenticated -> Unit
+                    else -> session.unreachable(signUp.error.message)
+                }
+                false
+            }
+        }
+
     /** Named so the customer can tell which device to revoke. */
-    private fun deviceName(): String {
+    internal fun deviceName(): String {
         val maker = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
         val model = Build.MODEL
         val name = if (model.startsWith(maker, ignoreCase = true)) model else "$maker $model"

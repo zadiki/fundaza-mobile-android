@@ -25,6 +25,8 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class HomeUiState(
+    /** True until the first load finishes; the whole screen shows placeholders together until then. */
+    val loading: Boolean = true,
     val firstName: String = "",
     val canSend: Boolean = false,
     val canViewTransfers: Boolean = false,
@@ -82,6 +84,7 @@ class HomeViewModel @Inject constructor(
                     } ?: LoadState.Loaded(emptyList()),
                     recipientNames = names.ifEmpty { s.recipientNames },
                     refreshing = false,
+                    loading = false,
                 )
             }
         }

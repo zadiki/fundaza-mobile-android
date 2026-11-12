@@ -4,6 +4,9 @@ import africa.fundaza.customer.core.money.Money
 import africa.fundaza.customer.data.remote.dto.BeneficiaryDto
 import africa.fundaza.customer.data.remote.dto.BeneficiaryFieldDto
 import africa.fundaza.customer.data.remote.dto.ChargeDto
+import africa.fundaza.customer.data.remote.dto.CountryOptionDto
+import africa.fundaza.customer.data.remote.dto.KycStateDto
+import africa.fundaza.customer.data.remote.dto.SignUpDto
 import africa.fundaza.customer.data.remote.dto.CorridorDto
 import africa.fundaza.customer.data.remote.dto.CorridorMethodsDto
 import africa.fundaza.customer.data.remote.dto.CurrentUserDto
@@ -13,6 +16,14 @@ import africa.fundaza.customer.data.remote.dto.QuoteDto
 import africa.fundaza.customer.data.remote.dto.TransactionDto
 import africa.fundaza.customer.data.remote.dto.TransferDocumentDto
 import africa.fundaza.customer.data.remote.dto.WalletDto
+import africa.fundaza.customer.domain.model.CountryOption
+import africa.fundaza.customer.domain.model.KycDocument
+import africa.fundaza.customer.domain.model.KycDocumentType
+import africa.fundaza.customer.domain.model.KycMode
+import africa.fundaza.customer.domain.model.KycRestart
+import africa.fundaza.customer.domain.model.KycState
+import africa.fundaza.customer.domain.model.SignUp
+import africa.fundaza.customer.domain.model.SignUpStep
 import africa.fundaza.customer.domain.model.AmountLimit
 import africa.fundaza.customer.domain.model.Beneficiary
 import africa.fundaza.customer.domain.model.BeneficiaryField
@@ -186,3 +197,32 @@ internal fun WalletDto.toDomain() = Wallet(
 /** MOBILE_MONEY → "Mobile money". */
 fun String.prettyCode(): String =
     lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
+
+internal fun SignUpDto.toDomain() = SignUp(
+    fullName = fullName,
+    email = email,
+    phone = phone,
+    residenceIso2 = residenceIso2,
+    emailVerified = emailVerified,
+    phoneVerificationRequired = phoneVerificationRequired,
+    phoneVerified = phoneVerified,
+    nextStep = SignUpStep.entries.firstOrNull { it.name == nextStep } ?: SignUpStep.EMAIL,
+)
+
+internal fun CountryOptionDto.toDomain() = CountryOption(iso2 = iso2, name = name, dialCode = dialCode)
+
+internal fun KycStateDto.toDomain() = KycState(
+    status = status,
+    verified = verified,
+    tier = tier,
+    expiresAt = parseDate(expiresAt),
+    mode = if (mode == "HOSTED") KycMode.HOSTED else KycMode.DOCUMENTS,
+    canStartVerification = canStartVerification,
+    canAddIdentity = canAddIdentity,
+    canSubmit = canSubmit,
+    restart = restart?.let { KycRestart(rejected = it.reason == "REJECTED", attemptsLeft = it.attemptsLeft) },
+    documents = documents.map {
+        KycDocument(it.id, it.typeCode, it.typeName, it.issuingCountryIso2, parseDate(it.expiresAt))
+    },
+    documentTypes = documentTypes.map { KycDocumentType(it.code, it.name) },
+)

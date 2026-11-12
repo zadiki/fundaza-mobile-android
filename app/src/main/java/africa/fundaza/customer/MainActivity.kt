@@ -1,6 +1,5 @@
 package africa.fundaza.customer
 
-import africa.fundaza.customer.core.security.SessionState
 import africa.fundaza.customer.ui.AppViewModel
 import africa.fundaza.customer.ui.navigation.FundazaApp
 import africa.fundaza.customer.ui.theme.FundazaTheme
@@ -18,10 +17,11 @@ class MainActivity : ComponentActivity() {
     private val appViewModel: AppViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val splash = installSplashScreen()
+        // The system splash hands over on the first frame to the in-app SplashScreen,
+        // which looks identical and stays up while the session and home screen load.
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        splash.setKeepOnScreenCondition { appViewModel.sessionState.value is SessionState.Restoring }
         setContent {
             FundazaTheme {
                 FundazaApp(appViewModel)

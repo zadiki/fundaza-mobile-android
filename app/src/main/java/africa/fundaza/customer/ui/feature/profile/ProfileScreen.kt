@@ -15,6 +15,7 @@ import africa.fundaza.customer.ui.components.SecondaryButton
 import africa.fundaza.customer.ui.components.flagOf
 import africa.fundaza.customer.ui.components.initialsOf
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -49,6 +50,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @Composable
 fun ProfileScreen(
     onSignOut: () -> Unit,
+    onVerify: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
@@ -73,7 +75,7 @@ fun ProfileScreen(
             when (val c = state.customer) {
                 LoadState.Loading -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 is LoadState.Failed -> Banner(c.message, tone = BannerTone.Error, action = { TextButton(onClick = viewModel::load) { Text("Try again") } })
-                is LoadState.Loaded -> CustomerDetails(c.value)
+                is LoadState.Loaded -> CustomerDetails(c.value, onVerify)
             }
 
             Spacer(Modifier.height(32.dp))
@@ -106,7 +108,7 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun CustomerDetails(customer: Customer) {
+private fun CustomerDetails(customer: Customer, onVerify: () -> Unit) {
     val kyc = customer.kyc
     if (kyc.verified) {
         Banner(
@@ -118,9 +120,10 @@ private fun CustomerDetails(customer: Customer) {
     } else {
         Banner(
             title = if (kyc.status == "VERIFIED") "Verification expired" else "Not yet verified",
-            text = "Visit any Fundaza agent with a valid ID to verify. Verified customers can send more.",
+            text = if (kyc.status == "PENDING") "We're checking your details. Tap to see where it stands." else "Tap to verify with your national ID or passport.",
             tone = BannerTone.Warning,
             icon = Icons.Outlined.VerifiedUser,
+            modifier = Modifier.clickable(onClick = onVerify),
         )
     }
     Spacer(Modifier.height(20.dp))

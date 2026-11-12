@@ -55,7 +55,8 @@ class LoginViewModel @Inject constructor(
             when (val result = auth.signIn(current.email, current.password)) {
                 // The session drives navigation; nothing to do here but stop spinning.
                 is ApiResult.Success -> when (result.value) {
-                    is SignInResult.SignedIn -> _state.update { it.copy(submitting = false, password = "") }
+                    is SignInResult.SignedIn, SignInResult.SigningUp ->
+                        _state.update { it.copy(submitting = false, password = "") }
                     SignInResult.NotACustomer -> _state.update {
                         it.copy(
                             submitting = false,

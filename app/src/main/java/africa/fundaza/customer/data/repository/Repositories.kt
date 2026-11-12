@@ -1,6 +1,13 @@
 package africa.fundaza.customer.data.repository
 
 import africa.fundaza.customer.core.network.ApiResult
+import africa.fundaza.customer.core.security.SessionState
+import africa.fundaza.customer.domain.model.CountryOption
+import africa.fundaza.customer.domain.model.IndividualDetails
+import africa.fundaza.customer.domain.model.KycState
+import africa.fundaza.customer.domain.model.NewIdentityDocument
+import africa.fundaza.customer.domain.model.NewSignUp
+import africa.fundaza.customer.domain.model.SignUp
 import africa.fundaza.customer.domain.model.Beneficiary
 import africa.fundaza.customer.domain.model.BeneficiaryField
 import africa.fundaza.customer.domain.model.Corridor
@@ -22,6 +29,32 @@ sealed interface SignInResult {
     data class SignedIn(val user: CurrentUser) : SignInResult
     /** Valid credentials, but not a customer login — agents and staff use the web. */
     data object NotACustomer : SignInResult
+    /** A login whose sign-up is unfinished; the session now follows that sign-up. */
+    data object SigningUp : SignInResult
+}
+
+/** Self-registration: a login first, then the steps the server asks for, then the customer. */
+interface SignUpRepository {
+    suspend fun countries(): ApiResult<List<CountryOption>>
+    /** Creates the login and signs this device in; the session moves to [SessionState.SigningUp]. */
+    suspend fun register(details: NewSignUp): ApiResult<Unit>
+    /** Re-reads the sign-up (after the email link was followed in a browser, say) and updates the session. */
+    suspend fun refresh(): ApiResult<SignUp>
+    suspend fun resendEmail(): ApiResult<Unit>
+    suspend fun sendPhoneCode(): ApiResult<Unit>
+    suspend fun confirmPhone(code: String): ApiResult<SignUp>
+    /** Writes the customer; the session moves to a signed-in customer who has not yet verified. */
+    suspend fun finishAsIndividual(details: IndividualDetails): ApiResult<Unit>
+}
+
+/** The signed-in customer's own identity verification. */
+interface KycRepository {
+    suspend fun state(): ApiResult<KycState>
+    /** A short-lived token for the provider SDK. Never stored. */
+    suspend fun providerToken(): ApiResult<String>
+    suspend fun uploadIdentity(document: NewIdentityDocument): ApiResult<KycState>
+    suspend fun submit(): ApiResult<KycState>
+    suspend fun restart(): ApiResult<KycState>
 }
 
 interface AuthRepository {

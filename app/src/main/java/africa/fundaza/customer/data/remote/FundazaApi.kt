@@ -20,6 +20,14 @@ import africa.fundaza.customer.data.remote.dto.TokenRequest
 import africa.fundaza.customer.data.remote.dto.TransactionDto
 import africa.fundaza.customer.data.remote.dto.TransferDocumentDto
 import africa.fundaza.customer.data.remote.dto.WalletDto
+import africa.fundaza.customer.data.remote.dto.CountryOptionDto
+import africa.fundaza.customer.data.remote.dto.IndividualDetailsRequest
+import africa.fundaza.customer.data.remote.dto.KycSessionDto
+import africa.fundaza.customer.data.remote.dto.KycStateDto
+import africa.fundaza.customer.data.remote.dto.PhoneCodeRequest
+import africa.fundaza.customer.data.remote.dto.SignUpDto
+import africa.fundaza.customer.data.remote.dto.SignUpRequest
+import africa.fundaza.customer.data.remote.dto.SignedUpDto
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import retrofit2.Response
@@ -102,4 +110,51 @@ interface FundazaApi {
 
     @POST("api/v1/devices")
     suspend fun registerDevice(@Body body: DeviceRequest): Response<Unit>
+
+    // --- sign-up: a login with no customer yet -------------------------------
+
+    @GET("api/v1/countries")
+    suspend fun countries(): Envelope<List<CountryOptionDto>>
+
+    @POST("api/v1/sign-ups")
+    suspend fun signUp(@Body body: SignUpRequest): Envelope<SignedUpDto>
+
+    @GET("api/v1/sign-ups/current")
+    suspend fun currentSignUp(): Envelope<SignUpDto>
+
+    @POST("api/v1/sign-ups/current/email")
+    suspend fun resendSignUpEmail(): Response<Unit>
+
+    @POST("api/v1/sign-ups/current/phone/code")
+    suspend fun sendSignUpPhoneCode(): Response<Unit>
+
+    @POST("api/v1/sign-ups/current/phone")
+    suspend fun confirmSignUpPhone(@Body body: PhoneCodeRequest): Envelope<SignUpDto>
+
+    @POST("api/v1/sign-ups/current/individual")
+    suspend fun finishSignUpAsIndividual(@Body body: IndividualDetailsRequest): Envelope<CustomerDto>
+
+    // --- verification ----------------------------------------------------------
+
+    @GET("api/v1/customers/me/kyc")
+    suspend fun kyc(): Envelope<KycStateDto>
+
+    @POST("api/v1/customers/me/kyc/session")
+    suspend fun kycSession(): Envelope<KycSessionDto>
+
+    @Multipart
+    @POST("api/v1/customers/me/kyc/documents")
+    suspend fun uploadIdentity(
+        @Part("document_type") documentType: RequestBody,
+        @Part("document_number") documentNumber: RequestBody,
+        @Part("issuing_country_iso2") issuingCountryIso2: RequestBody,
+        @Part("expires_at") expiresAt: RequestBody,
+        @Part file: MultipartBody.Part,
+    ): Envelope<KycStateDto>
+
+    @POST("api/v1/customers/me/kyc/submit")
+    suspend fun submitKyc(): Envelope<KycStateDto>
+
+    @POST("api/v1/customers/me/kyc/restart")
+    suspend fun restartKyc(): Envelope<KycStateDto>
 }
