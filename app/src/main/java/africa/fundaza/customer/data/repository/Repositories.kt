@@ -3,6 +3,9 @@ package africa.fundaza.customer.data.repository
 import africa.fundaza.customer.core.network.ApiResult
 import africa.fundaza.customer.core.security.SessionState
 import africa.fundaza.customer.domain.model.CountryOption
+import africa.fundaza.customer.domain.model.GoodsDraft
+import africa.fundaza.customer.domain.model.GoodsRequirement
+import africa.fundaza.customer.domain.model.InvoiceGoods
 import africa.fundaza.customer.domain.model.IndividualDetails
 import africa.fundaza.customer.domain.model.KycState
 import africa.fundaza.customer.domain.model.NewIdentityDocument
@@ -89,6 +92,10 @@ interface BeneficiaryRepository {
 
 interface TransferRepository {
     suspend fun quote(request: QuoteRequest): ApiResult<Quote>
+
+    /** Whether this send must list its goods: a payment for goods to a company in China. */
+    suspend fun goodsRequirement(quoteReference: String, beneficiaryId: Long): ApiResult<GoodsRequirement>
+
     suspend fun create(
         quoteReference: String,
         beneficiaryId: Long,
@@ -96,6 +103,9 @@ interface TransferRepository {
         documentIds: List<Long>,
         /** The customer's password; the server requires it when paying from the wallet. */
         password: String? = null,
+        /** The goods a payment for goods to China pays for, priced in [goodsCurrency]. */
+        goods: GoodsDraft? = null,
+        goodsCurrency: String? = null,
     ): ApiResult<Transfer>
     suspend fun transfers(): ApiResult<List<Transfer>>
     suspend fun transfer(reference: String): ApiResult<TransferDetail>
@@ -107,6 +117,9 @@ interface TransferRepository {
 interface DocumentRepository {
     /** [contentUri] is a `content://` URI string from the system file picker. */
     suspend fun upload(type: TransferDocumentType, contentUri: String): ApiResult<TransferDocument>
+
+    /** What an uploaded invoice seems to bill, to pre-fill the goods; the customer checks it. */
+    suspend fun invoiceGoods(documentId: Long): ApiResult<InvoiceGoods>
 }
 
 interface WalletRepository {

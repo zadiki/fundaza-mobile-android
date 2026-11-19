@@ -119,9 +119,12 @@ data class QuoteRequestDto(
     @SerialName("receive_country_iso2") val receiveCountryIso2: String,
     @SerialName("send_currency_code") val sendCurrencyCode: String,
     @SerialName("receive_currency_code") val receiveCurrencyCode: String,
-    /** A decimal string, never a number. */
-    @SerialName("send_amount") val sendAmount: String,
+    /** A decimal string, never a number. Left out when the price is asked on [receiveAmount]. */
+    @SerialName("send_amount") val sendAmount: String? = null,
     @SerialName("delivery_method_code") val deliveryMethodCode: String,
+    /** `receive` prices [receiveAmount], what the recipient gets; `send` (the default) prices [sendAmount]. */
+    @SerialName("amount_basis") val amountBasis: String? = null,
+    @SerialName("receive_amount") val receiveAmount: String? = null,
     @SerialName("payment_method_code") val paymentMethodCode: String? = null,
     @SerialName("fast_arrival") val fastArrival: Boolean = false,
 )
@@ -208,6 +211,54 @@ data class CreateTransactionDto(
     @SerialName("document_ids") val documentIds: List<Long>? = null,
     /** Required by the server when the quote is paid from the wallet. */
     val password: String? = null,
+    /** Required for a payment for goods to a company in China. */
+    val goods: GoodsDto? = null,
+)
+
+@Serializable
+data class GoodsDto(
+    @SerialName("merchant_name") val merchantName: String,
+    @SerialName("trade_date") val tradeDate: String,
+    val lines: List<GoodsLineDto>,
+    @SerialName("sales_link") val salesLink: String? = null,
+    @SerialName("logistics_company") val logisticsCompany: String? = null,
+    @SerialName("tracking_number") val trackingNumber: String? = null,
+)
+
+@Serializable
+data class GoodsLineDto(
+    @SerialName("product_name") val productName: String,
+    val category: String,
+    /** Decimal strings, never numbers. */
+    @SerialName("unit_price") val unitPrice: String,
+    @SerialName("currency_code") val currencyCode: String,
+    val quantity: String,
+)
+
+@Serializable
+data class GoodsRequirementDto(
+    val needed: Boolean,
+    val currency: String,
+    val categories: List<GoodsCategoryDto> = emptyList(),
+)
+
+@Serializable
+data class GoodsCategoryDto(val code: String, val label: String)
+
+@Serializable
+data class InvoiceGoodsDto(
+    val read: Boolean,
+    @SerialName("merchant_name") val merchantName: String? = null,
+    @SerialName("trade_date") val tradeDate: String? = null,
+    @SerialName("currency_code") val currencyCode: String? = null,
+    val lines: List<InvoiceGoodsLineDto> = emptyList(),
+)
+
+@Serializable
+data class InvoiceGoodsLineDto(
+    @SerialName("product_name") val productName: String,
+    @SerialName("unit_price") val unitPrice: String,
+    val quantity: String,
 )
 
 /** Where and how to pay a transfer still awaiting payment. */

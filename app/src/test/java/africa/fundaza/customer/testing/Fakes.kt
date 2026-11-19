@@ -14,6 +14,9 @@ import africa.fundaza.customer.data.repository.TransferRepository
 import africa.fundaza.customer.domain.model.AmountLimit
 import africa.fundaza.customer.domain.model.Beneficiary
 import africa.fundaza.customer.domain.model.BeneficiaryField
+import africa.fundaza.customer.domain.model.GoodsDraft
+import africa.fundaza.customer.domain.model.GoodsRequirement
+import africa.fundaza.customer.domain.model.InvoiceGoods
 import africa.fundaza.customer.domain.model.BeneficiaryWay
 import africa.fundaza.customer.domain.model.Corridor
 import africa.fundaza.customer.domain.model.CorridorMethods
@@ -83,18 +86,31 @@ class FakeTransferRepository(private val clock: Clock) : TransferRepository {
     var createFailure: ApiError? = null
     /** Receive units per send unit, per (send, receive) currency pair; 17.82 otherwise. */
     var rates: Map<Pair<String, String>, BigDecimal> = emptyMap()
+    /** Extra fee per way to pay, on top of the flat 50. */
+    var paymentFees: Map<String, BigDecimal> = emptyMap()
+    /** The customer's transfers, newest first, and how each was paid. */
+    var history: List<Pair<String, String>> = emptyList()
+    /** What `goodsRequirement` answers; not needed unless a test says so. */
+    var goodsRequirement: GoodsRequirement = GoodsRequirement(needed = false, currency = "CNY", categories = emptyList())
+    /** The goods each send was made with. */
+    val sentGoods = mutableListOf<GoodsDraft?>()
 
     override suspend fun quote(request: QuoteRequest): ApiResult<Quote> {
         quoteRequests += request
         quoteFailure?.let { return ApiResult.Failure(it) }
         val rate = rates[request.sendCurrency to request.receiveCurrency] ?: BigDecimal("17.82")
+        // Asked on what the recipient gets, the send amount is worked out from it, as the server does.
+        val send = request.receiveAmount?.divide(rate, 4, java.math.RoundingMode.UP) ?: request.sendAmount
         return ApiResult.Success(
             Quote(
                 reference = "QT-${quoteRequests.size}",
                 corridorId = 3,
-                sendAmount = Money(request.sendAmount, request.sendCurrency),
-                receiveAmount = Money(request.sendAmount * rate, request.receiveCurrency),
-                totalPayable = Money(request.sendAmount + BigDecimal("50"), request.sendCurrency),
+                sendAmount = Money(send, request.sendCurrency),
+                receiveAmount = Money(request.receiveAmount ?: (send * rate), request.receiveCurrency),
+                totalPayable = Money(
+                    send + BigDecimal("50") + (paymentFees[request.paymentMethod] ?: BigDecimal.ZERO),
+                    request.sendCurrency,
+                ),
                 customerRate = rate,
                 charges = emptyList(),
                 fastArrivalChosen = request.fastArrival,
@@ -110,8 +126,11 @@ class FakeTransferRepository(private val clock: Clock) : TransferRepository {
         purpose: SendingPurpose?,
         documentIds: List<Long>,
         password: String?,
+        goods: GoodsDraft?,
+        goodsCurrency: String?,
     ): ApiResult<Transfer> {
         passwords += password
+        sentGoods += goods
         if (password != null && password != walletPassword) {
             return ApiResult.Failure(
                 ApiError.Validation("That password is not right. Try again.", mapOf("password" to listOf("That password is not right. Try again."))),
@@ -123,8 +142,19 @@ class FakeTransferRepository(private val clock: Clock) : TransferRepository {
         return ApiResult.Success(Transfer("TXN-1", TransferStatus.AWAITING_PAYMENT, false, money, money, money, BigDecimal.ONE, beneficiaryId, null, emptyList()))
     }
 
-    override suspend fun transfers(): ApiResult<List<Transfer>> = ApiResult.Success(emptyList())
-    override suspend fun transfer(reference: String): ApiResult<TransferDetail> = ApiResult.Failure(ApiError.NotFound())
+    override suspend fun goodsRequirement(quoteReference: String, beneficiaryId: Long): ApiResult<GoodsRequirement> =
+        ApiResult.Success(goodsRequirement)
+
+    override suspend fun transfers(): ApiResult<List<Transfer>> {
+        val money = Money(BigDecimal.ONE, "CNY")
+        return ApiResult.Success(history.map { (ref, _) -> Transfer(ref, TransferStatus.COMPLETED, true, money, money, money, BigDecimal.ONE, 88, null, emptyList()) })
+    }
+
+    override suspend fun transfer(reference: String): ApiResult<TransferDetail> {
+        val (ref, paidBy) = history.firstOrNull { it.first == reference } ?: return ApiResult.Failure(ApiError.NotFound())
+        val transfer = (transfers() as ApiResult.Success).value.first { it.reference == ref }
+        return ApiResult.Success(TransferDetail(transfer, emptyList(), paymentMethodCode = paidBy))
+    }
     override suspend fun startMpesa(reference: String, phone: String?): ApiResult<String> = ApiResult.Success(phone ?: "254700111222")
 }
 
@@ -145,8 +175,13 @@ class FakeBeneficiaryRepository(var list: List<Beneficiary> = emptyList()) : Ben
 }
 
 class FakeDocumentRepository : DocumentRepository {
+    /** What reading an invoice answers. */
+    var invoice: InvoiceGoods = InvoiceGoods(read = false, merchantName = null, tradeDate = null, currencyCode = null, lines = emptyList())
+
     override suspend fun upload(type: TransferDocumentType, contentUri: String) =
         ApiResult.Success(TransferDocument(41, type.name, type.label, "invoice.pdf", "PENDING"))
+
+    override suspend fun invoiceGoods(documentId: Long): ApiResult<InvoiceGoods> = ApiResult.Success(invoice)
 }
 
 class FakeAuthRepository : AuthRepository {

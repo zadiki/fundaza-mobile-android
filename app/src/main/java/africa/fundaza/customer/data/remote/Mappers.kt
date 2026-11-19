@@ -11,6 +11,10 @@ import africa.fundaza.customer.data.remote.dto.CorridorDto
 import africa.fundaza.customer.data.remote.dto.CorridorMethodsDto
 import africa.fundaza.customer.data.remote.dto.CurrentUserDto
 import africa.fundaza.customer.data.remote.dto.CustomerDto
+import africa.fundaza.customer.data.remote.dto.GoodsDto
+import africa.fundaza.customer.data.remote.dto.GoodsLineDto
+import africa.fundaza.customer.data.remote.dto.GoodsRequirementDto
+import africa.fundaza.customer.data.remote.dto.InvoiceGoodsDto
 import africa.fundaza.customer.data.remote.dto.MoneyDto
 import africa.fundaza.customer.data.remote.dto.QuoteDto
 import africa.fundaza.customer.data.remote.dto.TransactionDto
@@ -35,6 +39,11 @@ import africa.fundaza.customer.domain.model.CorridorMethods
 import africa.fundaza.customer.domain.model.Country
 import africa.fundaza.customer.domain.model.CurrentUser
 import africa.fundaza.customer.domain.model.Customer
+import africa.fundaza.customer.domain.model.GoodsCategory
+import africa.fundaza.customer.domain.model.GoodsDraft
+import africa.fundaza.customer.domain.model.GoodsRequirement
+import africa.fundaza.customer.domain.model.InvoiceGoods
+import africa.fundaza.customer.domain.model.InvoiceGoodsLine
 import africa.fundaza.customer.domain.model.Kyc
 import africa.fundaza.customer.domain.model.Method
 import africa.fundaza.customer.domain.model.Quote
@@ -180,6 +189,38 @@ internal fun TransactionDto.toDetail() = TransferDetail(
 )
 
 internal fun TransferDocumentDto.toDomain() = TransferDocument(id, typeCode, typeName, fileName, status)
+
+internal fun GoodsRequirementDto.toDomain() = GoodsRequirement(
+    needed = needed,
+    currency = currency,
+    categories = categories.map { GoodsCategory(it.code, it.label) },
+)
+
+internal fun InvoiceGoodsDto.toDomain() = InvoiceGoods(
+    read = read,
+    merchantName = merchantName,
+    tradeDate = tradeDate,
+    currencyCode = currencyCode,
+    lines = lines.map { InvoiceGoodsLine(it.productName, it.unitPrice, it.quantity) },
+)
+
+/** The goods as the server takes them; every price in [currency], the payout's. */
+internal fun GoodsDraft.toDto(currency: String) = GoodsDto(
+    merchantName = merchantName.trim(),
+    tradeDate = tradeDate.trim(),
+    lines = lines.map {
+        GoodsLineDto(
+            productName = it.productName.trim(),
+            category = it.categoryCode,
+            unitPrice = it.unitPrice.trim(),
+            currencyCode = currency,
+            quantity = it.quantity.trim(),
+        )
+    },
+    salesLink = salesLink.trim().ifEmpty { null },
+    logisticsCompany = logisticsCompany.trim().ifEmpty { null },
+    trackingNumber = trackingNumber.trim().ifEmpty { null },
+)
 
 internal fun WalletDto.toDomain() = Wallet(
     balances = balances.map { Money.parse(it.amount, it.currency) },

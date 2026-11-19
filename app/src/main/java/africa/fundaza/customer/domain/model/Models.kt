@@ -114,6 +114,11 @@ data class QuoteRequest(
     val deliveryMethod: String,
     val paymentMethod: String?,
     val fastArrival: Boolean,
+    /**
+     * When set, the price is asked on what the recipient gets instead of [sendAmount]: a payment
+     * for goods to China is priced on the goods' total.
+     */
+    val receiveAmount: BigDecimal? = null,
 )
 
 data class BeneficiaryField(

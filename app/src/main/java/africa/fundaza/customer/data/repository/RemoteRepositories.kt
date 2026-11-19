@@ -15,12 +15,16 @@ import africa.fundaza.customer.data.remote.dto.QuoteRequestDto
 import africa.fundaza.customer.data.remote.dto.SaveInstrumentDto
 import africa.fundaza.customer.data.remote.toDetail
 import africa.fundaza.customer.data.remote.toDomain
+import africa.fundaza.customer.data.remote.toDto
 import africa.fundaza.customer.data.remote.toTransfer
 import africa.fundaza.customer.domain.model.Beneficiary
 import africa.fundaza.customer.domain.model.BeneficiaryField
 import africa.fundaza.customer.domain.model.Corridor
 import africa.fundaza.customer.domain.model.CorridorMethods
 import africa.fundaza.customer.domain.model.Customer
+import africa.fundaza.customer.domain.model.GoodsDraft
+import africa.fundaza.customer.domain.model.GoodsRequirement
+import africa.fundaza.customer.domain.model.InvoiceGoods
 import africa.fundaza.customer.domain.model.NewBeneficiary
 import africa.fundaza.customer.domain.model.NewWay
 import africa.fundaza.customer.domain.model.Quote
@@ -44,6 +48,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.math.RoundingMode
 import java.time.Clock
 import java.time.Duration
 import javax.inject.Inject
@@ -199,8 +204,10 @@ class TransferRepositoryImpl @Inject constructor(
                 receiveCountryIso2 = request.receiveCountry,
                 sendCurrencyCode = request.sendCurrency,
                 receiveCurrencyCode = request.receiveCurrency,
-                sendAmount = request.sendAmount.stripTrailingZeros().toPlainString(),
+                sendAmount = if (request.receiveAmount == null) request.sendAmount.stripTrailingZeros().toPlainString() else null,
                 deliveryMethodCode = request.deliveryMethod,
+                amountBasis = if (request.receiveAmount == null) null else "receive",
+                receiveAmount = request.receiveAmount?.setScale(2, RoundingMode.HALF_UP)?.toPlainString(),
                 paymentMethodCode = request.paymentMethod,
                 fastArrival = request.fastArrival,
             ),
@@ -213,11 +220,23 @@ class TransferRepositoryImpl @Inject constructor(
         purpose: SendingPurpose?,
         documentIds: List<Long>,
         password: String?,
+        goods: GoodsDraft?,
+        goodsCurrency: String?,
     ): ApiResult<Transfer> = call {
         api.createTransaction(
-            CreateTransactionDto(quoteReference, beneficiaryId, purpose?.name, documentIds.ifEmpty { null }, password),
+            CreateTransactionDto(
+                quoteReference,
+                beneficiaryId,
+                purpose?.name,
+                documentIds.ifEmpty { null },
+                password,
+                goods = if (goods != null && goodsCurrency != null) goods.toDto(goodsCurrency) else null,
+            ),
         ).data.toTransfer()
     }
+
+    override suspend fun goodsRequirement(quoteReference: String, beneficiaryId: Long): ApiResult<GoodsRequirement> =
+        call { api.goodsRequirement(quoteReference, beneficiaryId).data.toDomain() }
 
     override suspend fun transfers(): ApiResult<List<Transfer>> =
         call { api.transactions().data.map { it.toTransfer() } }
@@ -260,6 +279,9 @@ class DocumentRepositoryImpl @Inject constructor(
             ).data.toDomain()
         }
     }
+
+    override suspend fun invoiceGoods(documentId: Long): ApiResult<InvoiceGoods> =
+        call { api.invoiceGoods(documentId).data.toDomain() }
 
     private companion object {
         const val MAX_BYTES = 10L * 1024 * 1024

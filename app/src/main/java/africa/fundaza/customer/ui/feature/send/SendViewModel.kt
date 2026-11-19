@@ -15,6 +15,8 @@ import africa.fundaza.customer.domain.model.Beneficiary
 import africa.fundaza.customer.domain.model.BeneficiaryWay
 import africa.fundaza.customer.domain.model.Corridor
 import africa.fundaza.customer.domain.model.CorridorMethods
+import africa.fundaza.customer.domain.model.GoodsDraft
+import africa.fundaza.customer.domain.model.GoodsRequirement
 import africa.fundaza.customer.domain.model.Method
 import africa.fundaza.customer.domain.model.Quote
 import africa.fundaza.customer.domain.model.QuoteRequest
@@ -28,6 +30,9 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,13 +47,15 @@ import java.math.BigDecimal
 import java.math.MathContext
 import java.math.RoundingMode
 import java.time.Clock
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 
 enum class SendStep(val title: String) {
     Amount("How much?"),
     Recipient("Who to?"),
     Details("Why?"),
-    Review("Check and send"),
+    Review("Check and pay"),
 }
 
 data class SendUiState(
@@ -66,6 +73,10 @@ data class SendUiState(
     val methods: LoadState<CorridorMethods>? = null,
     val deliveryMethod: Method? = null,
     val paymentMethod: Method? = null,
+    /** The customer tapped a way to pay; from then on it's theirs, never swapped for a default. */
+    val paymentPicked: Boolean = false,
+    /** How their last transfer was paid; the default whenever this route takes it. */
+    val recentPaymentCode: String? = null,
     val amountInput: String = "",
     /** The customer typed an amount; stop prefilling the ~100 USD suggestion. */
     val amountEdited: Boolean = false,
@@ -86,6 +97,17 @@ data class SendUiState(
     val documents: List<TransferDocument> = emptyList(),
     val uploading: Boolean = false,
     val documentError: String? = null,
+
+    // Goods: a payment for goods to a company in China lists what it pays for, and the
+    // company receives the goods' total, so the price is asked on it.
+    /** Null until asked for the chosen recipient, or when it could not be told. */
+    val goodsRequirement: GoodsRequirement? = null,
+    val checkingGoods: Boolean = false,
+    val goods: GoodsDraft = GoodsDraft(),
+    val readingInvoice: Boolean = false,
+    val invoiceNote: String? = null,
+    /** Today where the customer is, for the sale date. */
+    val today: LocalDate = LocalDate.now(),
 
     // Review
     val submitting: Boolean = false,
@@ -146,12 +168,29 @@ data class SendUiState(
 
     val documentsRequired: Boolean get() = purpose?.requiresDocument == true
 
+    val goodsNeeded: Boolean get() = goodsRequirement?.needed == true
+
+    /** What the goods add up to, in the payout currency; null until every line is priced. */
+    val goodsTotal: BigDecimal? get() = if (goodsNeeded) goods.total else null
+
+    /** The price held pays the company exactly the goods' total (or no goods are needed). */
+    val goodsPriced: Boolean
+        get() {
+            if (!goodsNeeded) return true
+            val total = goodsTotal ?: return false
+            return quote != null && quote.receiveAmount.amount.compareTo(total) == 0
+        }
+
+    /** The latest invoice attached, the one the goods are read from. */
+    val latestInvoiceId: Long? get() = documents.lastOrNull { it.typeCode == TransferDocumentType.INVOICE.name }?.id
+
     val canContinue: Boolean
         get() = when (step) {
             SendStep.Amount -> quote != null && !quoting && amountError == null && quoteError == null
             SendStep.Recipient -> selectedRecipient != null
-            SendStep.Details -> purpose != null && !uploading && (!documentsRequired || documents.isNotEmpty())
-            SendStep.Review -> quote != null && selectedRecipient != null && !submitting && !quoting
+            SendStep.Details -> purpose != null && !uploading && (!documentsRequired || documents.isNotEmpty()) &&
+                (!goodsNeeded || (goods.complete(today) && goodsPriced && !quoting))
+            SendStep.Review -> quote != null && selectedRecipient != null && !submitting && !quoting && goodsPriced
         }
 }
 
@@ -171,14 +210,17 @@ class SendViewModel @Inject constructor(
     private val clock: Clock,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(SendUiState())
+    private val _state = MutableStateFlow(SendUiState(today = LocalDate.now(clock.withZone(ZoneId.systemDefault()))))
     val state: StateFlow<SendUiState> = _state.asStateFlow()
 
     private val _events = Channel<SendEvent>(Channel.BUFFERED)
     val events: Flow<SendEvent> = _events.receiveAsFlow()
 
-    /** What the next quote should price; null while the input can't be priced. */
-    private val quoteRequest = MutableStateFlow<QuoteRequest?>(null)
+    /**
+     * What the next quote should price; null while the input can't be priced. With no way to pay
+     * settled, [Pricing.compare] lists the ways to price side by side, and the cheapest is taken.
+     */
+    private val pricing = MutableStateFlow<Pricing?>(null)
 
     private var prefillJob: Job? = null
 
@@ -188,11 +230,20 @@ class SendViewModel @Inject constructor(
     init {
         loadCorridors()
         loadRecipients()
+        viewModelScope.launch { loadRecentPayment() }
         viewModelScope.launch {
-            quoteRequest
+            pricing
                 .debounce(QUOTE_DEBOUNCE_MS)
-                .collectLatest { request -> if (request != null) fetchQuote(request) }
+                .collectLatest { p -> if (p != null) fetchQuote(p) }
         }
+    }
+
+    /** How the customer paid their latest transfer (the list is newest first). */
+    private suspend fun loadRecentPayment() {
+        val latest = (transferRepository.transfers() as? ApiResult.Success)?.value?.firstOrNull() ?: return
+        val code = (transferRepository.transfer(latest.reference) as? ApiResult.Success)?.value?.paymentMethodCode ?: return
+        _state.update { it.copy(recentPaymentCode = code) }
+        reprice()
     }
 
     // --- route & amount ---------------------------------------------------------
@@ -264,7 +315,6 @@ class SendViewModel @Inject constructor(
                 it.copy(
                     methods = result.toLoadState(),
                     deliveryMethod = methods?.delivery?.firstOrNull(),
-                    paymentMethod = defaultPayment(methods?.payment.orEmpty(), it.sendCurrency),
                 )
             }
             reprice()
@@ -274,12 +324,9 @@ class SendViewModel @Inject constructor(
 
     fun selectSendCurrency(code: String) {
         _state.update {
-            val payments = it.methods?.valueOrNull?.payment.orEmpty()
             it.copy(
                 sendCurrency = code,
                 amountInput = if (it.amountEdited) it.amountInput else "",
-                // A way to pay that doesn't take this currency is no choice at all.
-                paymentMethod = it.paymentMethod?.takeIf { m -> m.takes(code) && m.available } ?: defaultPayment(payments, code),
             )
         }
         reprice()
@@ -298,7 +345,7 @@ class SendViewModel @Inject constructor(
 
     fun selectPaymentMethod(method: Method) {
         if (!method.available) return
-        _state.update { it.copy(paymentMethod = method) }
+        _state.update { it.copy(paymentMethod = method, paymentPicked = true) }
         reprice()
     }
 
@@ -366,15 +413,19 @@ class SendViewModel @Inject constructor(
     }
 
     fun retryQuote() {
-        val request = quoteRequest.value ?: return
-        viewModelScope.launch { fetchQuote(request) }
+        val p = pricing.value ?: return
+        viewModelScope.launch { fetchQuote(p) }
     }
 
     /** Recomputes what to price from the current input; the old quote no longer applies. */
     private fun reprice() {
+        // A way to pay that doesn't take this route or currency is no choice at all.
+        val compare = settlePayment()
         val s = _state.value
-        val amount = parseAmountInput(s.amountInput)
-        val amountError = amount?.let { limitError(s, it) }
+        // Past the amount, a payment for goods is priced on the goods' total: what the company receives.
+        val goodsTotal = s.goodsTotal?.takeIf { s.step >= SendStep.Details }
+        val amount = parseAmountInput(s.amountInput) ?: goodsTotal?.let { s.quote?.sendAmount?.amount }
+        val amountError = if (goodsTotal != null) null else amount?.let { limitError(s, it) }
         val corridor = s.corridor
         val request = if (amount != null && amountError == null && corridor != null &&
             s.sendCurrency != null && s.receiveCurrency != null && s.deliveryMethod != null
@@ -386,13 +437,15 @@ class SendViewModel @Inject constructor(
                 receiveCurrency = s.receiveCurrency,
                 sendAmount = amount,
                 deliveryMethod = s.deliveryMethod.code,
-                paymentMethod = s.paymentMethod?.code,
+                paymentMethod = if (compare.isEmpty()) s.paymentMethod?.code else null,
                 fastArrival = s.fastArrival,
+                receiveAmount = goodsTotal,
             )
         } else {
             null
         }
-        if (request != null && request == quoteRequest.value) {
+        val next = request?.let { Pricing(it, compare.map(Method::code)) }
+        if (next != null && next == pricing.value) {
             // Nothing that affects the price changed; keep the quote (or the quote in flight).
             _state.update { it.copy(amountError = amountError) }
             return
@@ -405,7 +458,28 @@ class SendViewModel @Inject constructor(
                 quoting = request != null,
             )
         }
-        quoteRequest.value = request
+        pricing.value = next
+    }
+
+    /**
+     * Settles the way to pay, in order: what the customer tapped, how they paid last time, the
+     * only option there is. Returns the options to price against each other when none of those
+     * settles it (the cheapest wins; the wallet is never compared in, spending a balance is the
+     * customer's call); empty when the way to pay is settled.
+     */
+    private fun settlePayment(): List<Method> {
+        val s = _state.value
+        val usable = s.paymentChoices.filter { it.available }
+        val settled = s.paymentMethod?.takeIf { s.paymentPicked }?.let { m -> usable.firstOrNull { it.code == m.code } }
+            ?: usable.firstOrNull { it.code == s.recentPaymentCode }
+        val candidates = usable.filterNot { it.isWallet }.ifEmpty { usable }
+        val shown = settled
+            ?: candidates.singleOrNull()
+            // While the comparison runs, keep what is showing if it's still in the running.
+            ?: s.paymentMethod?.let { m -> candidates.firstOrNull { it.code == m.code } }
+            ?: candidates.firstOrNull()
+        if (shown != s.paymentMethod) _state.update { it.copy(paymentMethod = shown) }
+        return if (settled == null && candidates.size > 1) candidates else emptyList()
     }
 
     private fun limitError(s: SendUiState, amount: BigDecimal): String? {
@@ -416,13 +490,38 @@ class SendViewModel @Inject constructor(
         return null
     }
 
-    private suspend fun fetchQuote(request: QuoteRequest): ApiResult<Quote> {
+    private suspend fun fetchQuote(p: Pricing): ApiResult<Quote> {
         _state.update { it.copy(quoting = true, quoteError = null) }
-        val result = transferRepository.quote(request)
+        var cheapest: String? = null
+        val result = if (p.compare.isEmpty()) {
+            transferRepository.quote(p.request)
+        } else {
+            val priced = coroutineScope {
+                p.compare.map { code -> async { code to transferRepository.quote(p.request.copy(paymentMethod = code)) } }.awaitAll()
+            }
+            // Ties go to the route's own order.
+            val best = priced
+                .mapNotNull { (code, r) -> (r as? ApiResult.Success)?.let { code to it } }
+                .minByOrNull { it.second.value.totalPayable.amount }
+            cheapest = best?.first
+            best?.second ?: priced.first().second
+        }
         // A newer request supersedes this one; collectLatest cancels us, but retry doesn't.
-        if (quoteRequest.value != request) return result
+        if (pricing.value != p) return result
         when (result) {
-            is ApiResult.Success -> _state.update { it.copy(quote = result.value, quoting = false) }
+            is ApiResult.Success -> _state.update { s ->
+                s.copy(
+                    quote = result.value,
+                    quoting = false,
+                    // Priced on the goods: the send box shows what that costs.
+                    amountInput = if (p.request.receiveAmount != null) {
+                        result.value.sendAmount.amount.stripTrailingZeros().toPlainString()
+                    } else {
+                        s.amountInput
+                    },
+                    paymentMethod = cheapest?.let { code -> s.paymentChoices.firstOrNull { it.code == code } } ?: s.paymentMethod,
+                )
+            }
             is ApiResult.Failure -> _state.update { it.copy(quote = null, quoting = false, quoteError = result.error.message) }
         }
         return result
@@ -440,7 +539,12 @@ class SendViewModel @Inject constructor(
 
     fun selectRecipient(id: Long) {
         _state.update { s ->
-            if (s.readyRecipients.any { it.first.id == id }) s.copy(recipientId = id) else s
+            when {
+                s.readyRecipients.none { it.first.id == id } -> s
+                // Whether goods are needed is asked again for whoever is chosen.
+                s.recipientId != id -> s.copy(recipientId = id, goodsRequirement = null)
+                else -> s
+            }
         }
     }
 
@@ -457,7 +561,10 @@ class SendViewModel @Inject constructor(
         _state.update { it.copy(uploading = true, documentError = null) }
         viewModelScope.launch {
             when (val result = documentRepository.upload(type, contentUri)) {
-                is ApiResult.Success -> _state.update { it.copy(uploading = false, documents = it.documents + result.value) }
+                is ApiResult.Success -> {
+                    _state.update { it.copy(uploading = false, documents = it.documents + result.value) }
+                    if (_state.value.goodsNeeded && type == TransferDocumentType.INVOICE) readInvoice(result.value.id)
+                }
                 is ApiResult.Failure -> _state.update {
                     it.copy(
                         uploading = false,
@@ -472,6 +579,73 @@ class SendViewModel @Inject constructor(
 
     fun removeDocument(id: Long) = _state.update { s -> s.copy(documents = s.documents.filterNot { it.id == id }) }
 
+    // --- goods -------------------------------------------------------------------------
+
+    /** Asks whether this send must list its goods; called on reaching Details. */
+    private fun loadGoodsRequirement() {
+        val s = _state.value
+        val quote = s.quote ?: return
+        val recipient = s.selectedRecipient?.first ?: return
+        if (s.goodsRequirement != null) {
+            reprice()
+            return
+        }
+        _state.update { it.copy(checkingGoods = true) }
+        viewModelScope.launch {
+            val result = transferRepository.goodsRequirement(quote.reference, recipient.id)
+            if (_state.value.recipientId != recipient.id) return@launch
+            val requirement = (result as? ApiResult.Success)?.value
+            _state.update {
+                it.copy(
+                    checkingGoods = false,
+                    // Unknown counts as not needed: the server still refuses a send without them.
+                    goodsRequirement = requirement,
+                    // A company in China is paid only for goods.
+                    purpose = if (requirement?.needed == true && it.purpose == null) SendingPurpose.TRADE_PAYMENT else it.purpose,
+                    // Moved on before the answer came: the goods are listed on Details.
+                    step = if (requirement?.needed == true && it.step > SendStep.Details) SendStep.Details else it.step,
+                )
+            }
+            reprice()
+        }
+    }
+
+    /** The customer changed the goods; a new total is priced once it settles. */
+    fun updateGoods(change: (GoodsDraft) -> GoodsDraft) {
+        _state.update { it.copy(goods = change(it.goods)) }
+        reprice()
+    }
+
+    /** Fills in what the customer left empty from an attached PDF invoice; they check it. */
+    fun readInvoice(documentId: Long? = _state.value.latestInvoiceId) {
+        val id = documentId ?: return
+        val currency = _state.value.goodsRequirement?.currency ?: return
+        _state.update { it.copy(readingInvoice = true, invoiceNote = null) }
+        viewModelScope.launch {
+            val invoice = (documentRepository.invoiceGoods(id) as? ApiResult.Success)?.value
+            if (invoice == null || !invoice.read || (invoice.merchantName == null && invoice.tradeDate == null && invoice.lines.isEmpty())) {
+                _state.update { it.copy(readingInvoice = false, invoiceNote = UNREADABLE_INVOICE) }
+                return@launch
+            }
+            _state.update { s ->
+                val note = buildString {
+                    append(
+                        if (s.goods.touched) {
+                            "Filled in what you had left empty from the invoice. Check every field before you send."
+                        } else {
+                            "Filled in from the invoice. Check every field, and choose a category for each product."
+                        },
+                    )
+                    if (invoice.currencyCode != null && invoice.currencyCode != currency) {
+                        append(" The invoice is priced in ${invoice.currencyCode}. Enter each price in $currency.")
+                    }
+                }
+                s.copy(readingInvoice = false, goods = s.goods.withInvoice(invoice, currency), invoiceNote = note)
+            }
+            reprice()
+        }
+    }
+
     // --- steps & submit ----------------------------------------------------------------
 
     fun next() {
@@ -479,6 +653,7 @@ class SendViewModel @Inject constructor(
         if (!s.canContinue) return
         val nextStep = SendStep.entries.getOrNull(s.step.ordinal + 1) ?: return
         _state.update { it.copy(step = nextStep, submitError = null, repriced = false) }
+        if (nextStep == SendStep.Details) loadGoodsRequirement()
     }
 
     /** Returns false when already on the first step, so the screen should close. */
@@ -525,7 +700,7 @@ class SendViewModel @Inject constructor(
 
             if (quote.isExpired(clock.instant())) {
                 // Never send on a lapsed price: re-quote and let the customer look again.
-                val request = quoteRequest.value
+                val request = pricing.value
                 if (request == null) {
                     _state.update { it.copy(submitting = false, submitError = "This quote has expired. Go back and check the amount.") }
                     return@launch
@@ -542,7 +717,8 @@ class SendViewModel @Inject constructor(
                 return@launch
             }
 
-            when (val result = transferRepository.create(quote.reference, recipient.id, s.purpose, s.documents.map { it.id }, password)) {
+            val goods = s.goods.takeIf { s.goodsNeeded }
+            when (val result = transferRepository.create(quote.reference, recipient.id, s.purpose, s.documents.map { it.id }, password, goods, s.goodsRequirement?.currency)) {
                 is ApiResult.Success -> {
                     _state.update { it.copy(submitting = false, passwordPrompt = false) }
                     _events.send(SendEvent.Sent(result.value.reference))
@@ -564,18 +740,10 @@ class SendViewModel @Inject constructor(
 
     companion object {
         const val QUOTE_DEBOUNCE_MS = 450L
+        const val UNREADABLE_INVOICE = "We could not read the goods from this invoice. Type them in below."
         const val USD = "USD"
         val DEFAULT_USD = BigDecimal("100")
         private val PROBE_AMOUNT = BigDecimal("1000")
-
-        /**
-         * What a route opens on: the first way to pay that takes [currency] and isn't the wallet
-         * (spending a balance is something the customer picks, never a default), else whatever can pay.
-         */
-        internal fun defaultPayment(methods: List<Method>, currency: String?): Method? {
-            val usable = methods.filter { it.takes(currency) && it.available }
-            return usable.firstOrNull { !it.isWallet } ?: usable.firstOrNull()
-        }
 
         /** Two significant figures, whole units: 723.4 → 720, 12,903 → 13,000. */
         internal fun friendlyAmount(raw: BigDecimal): BigDecimal {
@@ -601,3 +769,6 @@ internal fun Beneficiary.matches(query: String): Boolean {
             }
     }
 }
+
+/** One pricing: the request, and the ways to pay to price against each other (none when settled). */
+private data class Pricing(val request: QuoteRequest, val compare: List<String> = emptyList())

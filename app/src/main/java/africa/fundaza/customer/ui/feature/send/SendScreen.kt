@@ -43,6 +43,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInVertically
+import africa.fundaza.customer.ui.components.RollingText
+import africa.fundaza.customer.ui.components.reveal
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -233,7 +239,7 @@ fun SendScreen(
                                 SendStep.Amount -> AmountStep(state, viewModel)
                                 SendStep.Recipient -> RecipientStep(state, viewModel, scroll, onAddRecipient)
                                 SendStep.Details -> DetailsStep(state, viewModel)
-                                SendStep.Review -> ReviewStep(state)
+                                SendStep.Review -> ReviewStep(state, viewModel)
                             }
                             Spacer(Modifier.height(24.dp))
                         }
@@ -388,12 +394,11 @@ private fun AmountStep(state: SendUiState, vm: SendViewModel) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) {
                     val quote = state.quote
-                    Text(
+                    // The figure rolls to its new value as the amount is typed.
+                    RollingText(
                         quote?.receiveAmount?.formatAmount() ?: "—",
                         style = MaterialTheme.typography.displayMedium,
                         color = if (quote != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 CurrencyPicker(state.corridor?.receiveCurrencies.orEmpty(), state.receiveCurrency, vm::selectReceiveCurrency)
@@ -428,31 +433,6 @@ private fun AmountStep(state: SendUiState, vm: SendViewModel) {
                     }
                 }
             }
-            val payments = state.paymentChoices
-            if (payments.isNotEmpty()) {
-                Spacer(Modifier.height(20.dp))
-                Eyebrow("How you pay")
-                Spacer(Modifier.height(10.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    payments.forEach { m ->
-                        ChoiceChip(
-                            text = m.name,
-                            selected = state.paymentMethod?.code == m.code,
-                            onClick = { vm.selectPaymentMethod(m) },
-                            enabled = m.available,
-                            detail = m.balance?.let { "Balance ${it.format()}" },
-                        )
-                    }
-                }
-                state.paymentMethod?.let { chosen ->
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        paymentHint(chosen),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
         }
     }
 
@@ -485,21 +465,32 @@ private fun AmountStep(state: SendUiState, vm: SendViewModel) {
 /** The perforation between "you send" and "they receive", carrying the rate. */
 @Composable
 private fun QuoteLine(state: SendUiState) {
+    val quote = state.quote
+    // Loading, priced and empty cross-fade rather than snapping between each other.
+    val phase = when {
+        state.quoting -> 0
+        quote != null -> 1
+        else -> 2
+    }
+    AnimatedContent(
+        targetState = phase,
+        transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(150)) },
+        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant),
+        label = "quoteLine",
+    ) { shownPhase ->
     Row(
         Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val quote = state.quote
         when {
-            state.quoting -> {
+            shownPhase == 0 -> {
                 CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(10.dp))
                 Text("Getting today's rate…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            quote != null -> {
+            shownPhase == 1 && quote != null -> {
                 Text(
                     formatRate(quote.customerRate, quote.sendAmount.currency, quote.receiveAmount.currency),
                     style = MonoStyle,
@@ -513,6 +504,7 @@ private fun QuoteLine(state: SendUiState) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
     }
 }
 
@@ -561,8 +553,8 @@ private fun CurrencyPicker(options: List<String>, selected: String?, onSelect: (
 }
 
 @Composable
-private fun Breakdown(quote: Quote) {
-    FCard {
+private fun Breakdown(quote: Quote, modifier: Modifier = Modifier) {
+    FCard(modifier.animateContentSize()) {
         KeyValueRow("You send", quote.sendAmount.format())
         quote.charges.forEach { charge ->
             KeyValueRow(
@@ -898,14 +890,59 @@ private fun DetailsStep(state: SendUiState, vm: SendViewModel) {
         Spacer(Modifier.height(8.dp))
         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
     }
+
+    if (state.checkingGoods) {
+        Spacer(Modifier.height(16.dp))
+        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+    }
+    if (state.goodsNeeded) GoodsSection(state, vm)
 }
 
 // ---------------------------------------------------------------------------------------------
 // Step 4: review
 
+/** The way to pay, asked on the last step; the hint says what happens once they confirm. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ReviewStep(state: SendUiState) {
-    val quote = state.quote ?: return
+private fun PaymentChoice(state: SendUiState, vm: SendViewModel) {
+    val payments = state.paymentChoices
+    if (payments.isNotEmpty()) {
+        Spacer(Modifier.height(20.dp))
+        Eyebrow("How you pay", modifier = Modifier.reveal(order = 1))
+        Spacer(Modifier.height(10.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            payments.forEachIndexed { i, m ->
+                ChoiceChip(
+                    modifier = Modifier.reveal(order = 2 + i),
+                    text = m.name,
+                    selected = state.paymentMethod?.code == m.code,
+                    onClick = { vm.selectPaymentMethod(m) },
+                    enabled = m.available,
+                    detail = m.balance?.let { "Balance ${it.format()}" },
+                )
+            }
+        }
+        AnimatedContent(
+            targetState = state.paymentMethod,
+            transitionSpec = {
+                (fadeIn(tween(250)) + slideInVertically { it / 2 }) togetherWith fadeOut(tween(120)) using SizeTransform(clip = false)
+            },
+            label = "paymentHint",
+        ) { chosen ->
+            if (chosen != null) {
+                Text(
+                    paymentHint(chosen),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReviewStep(state: SendUiState, vm: SendViewModel) {
     val (person, way) = state.selectedRecipient ?: return
 
     if (state.repriced) {
@@ -918,9 +955,11 @@ private fun ReviewStep(state: SendUiState) {
         Spacer(Modifier.height(16.dp))
     }
 
-    // The headline: what lands.
+    // The headline: what lands. Changing the way to pay re-prices, so the figure may be in flight.
+    val shown = state.quote
     Column(
         Modifier
+            .reveal(order = 0)
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
             .background(MaterialTheme.colorScheme.primary)
@@ -928,8 +967,8 @@ private fun ReviewStep(state: SendUiState) {
     ) {
         Eyebrow("${person.fullName.substringBefore(' ')} receives", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f))
         Spacer(Modifier.height(6.dp))
-        Text(
-            quote.receiveAmount.format(),
+        RollingText(
+            shown?.receiveAmount?.format() ?: "—",
             style = MaterialTheme.typography.displaySmall,
             color = MaterialTheme.colorScheme.secondary,
         )
@@ -941,11 +980,34 @@ private fun ReviewStep(state: SendUiState) {
         )
     }
 
-    Spacer(Modifier.height(16.dp))
-    Breakdown(quote)
+    // How the customer pays comes last: what they send and to whom is settled, and the fees below follow the choice.
+    PaymentChoice(state, vm)
+
+    if (state.quoteError != null) {
+        Spacer(Modifier.height(12.dp))
+        Banner(
+            state.quoteError,
+            tone = BannerTone.Error,
+            icon = Icons.Outlined.ErrorOutline,
+            action = { TextButton(onClick = vm::retryQuote, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text("Try again") } },
+        )
+    }
+
+    val quote = shown ?: run {
+        if (state.quoting) {
+            Spacer(Modifier.height(24.dp))
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            }
+        }
+        return
+    }
 
     Spacer(Modifier.height(16.dp))
-    FCard {
+    Breakdown(quote, Modifier.reveal(order = 3))
+
+    Spacer(Modifier.height(16.dp))
+    FCard(Modifier.reveal(order = 4)) {
         KeyValueRow("Recipient", person.fullName)
         KeyValueRow("Exchange rate", formatRate(quote.customerRate, quote.sendAmount.currency, quote.receiveAmount.currency), mono = true)
         state.paymentMethod?.let { KeyValueRow("You pay by", it.name) }

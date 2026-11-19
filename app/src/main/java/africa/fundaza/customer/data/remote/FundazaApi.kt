@@ -10,6 +10,8 @@ import africa.fundaza.customer.data.remote.dto.CurrentUserDto
 import africa.fundaza.customer.data.remote.dto.CustomerDto
 import africa.fundaza.customer.data.remote.dto.DeviceRequest
 import africa.fundaza.customer.data.remote.dto.Envelope
+import africa.fundaza.customer.data.remote.dto.GoodsRequirementDto
+import africa.fundaza.customer.data.remote.dto.InvoiceGoodsDto
 import africa.fundaza.customer.data.remote.dto.MpesaRequest
 import africa.fundaza.customer.data.remote.dto.MpesaSessionDto
 import africa.fundaza.customer.data.remote.dto.QuoteDto
@@ -85,6 +87,13 @@ interface FundazaApi {
     @POST("api/v1/quotes")
     suspend fun quote(@Body body: QuoteRequestDto): Envelope<QuoteDto>
 
+    /** Whether this send must list the goods it pays for: a payment for goods to a company in China. */
+    @GET("api/v1/quotes/{reference}/goods")
+    suspend fun goodsRequirement(
+        @Path("reference") reference: String,
+        @Query("beneficiary_id") beneficiaryId: Long,
+    ): Envelope<GoodsRequirementDto>
+
     @GET("api/v1/transactions")
     suspend fun transactions(): Envelope<List<TransactionDto>>
 
@@ -104,6 +113,10 @@ interface FundazaApi {
         @Part("document_type_code") documentTypeCode: RequestBody,
         @Part file: MultipartBody.Part,
     ): Envelope<TransferDocumentDto>
+
+    /** What an uploaded PDF invoice seems to bill, read on the server, to pre-fill the goods. */
+    @GET("api/v1/documents/{id}/goods")
+    suspend fun invoiceGoods(@Path("id") id: Long): Envelope<InvoiceGoodsDto>
 
     @GET("api/v1/wallet")
     suspend fun wallet(): Envelope<WalletDto>

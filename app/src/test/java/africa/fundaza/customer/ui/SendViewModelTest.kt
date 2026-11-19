@@ -402,4 +402,147 @@ class SendViewModelTest {
         vm.selectPaymentMethod(empty)
         assertEquals("BANK_TRANSFER", vm.state.value.paymentMethod?.code)
     }
+
+    private val CARD = Method("CARD", "Card")
+
+    @Test
+    fun `the way the customer paid last time is the default when the route takes it`() = runTest(main.dispatcher) {
+        transfers.history = listOf("TXN-9" to "CARD", "TXN-8" to "BANK_TRANSFER")
+        transfers.paymentFees = mapOf("CARD" to BigDecimal("300"))
+        corridors.methods = CorridorMethods(payment = listOf(BANK_TRANSFER, CARD), delivery = listOf(MOBILE_MONEY))
+        val vm = viewModel()
+        advanceUntilIdle()
+        vm.onAmountChange("25000"); advanceUntilIdle()
+
+        assertEquals("CARD", vm.state.value.paymentMethod?.code)
+        assertEquals("CARD", transfers.quoteRequests.last().paymentMethod)
+    }
+
+    @Test
+    fun `with no usable last way to pay the cheapest is chosen, and the customer can still change it`() = runTest(main.dispatcher) {
+        transfers.history = listOf("TXN-9" to "MOBILE_MONEY") // not offered on this route
+        transfers.paymentFees = mapOf("BANK_TRANSFER" to BigDecimal("120"), "CARD" to BigDecimal("40"))
+        corridors.methods = CorridorMethods(payment = listOf(BANK_TRANSFER, CARD, walletMethod()), delivery = listOf(MOBILE_MONEY))
+        val vm = viewModel()
+        advanceUntilIdle()
+        vm.onAmountChange("25000"); advanceUntilIdle()
+
+        assertEquals("CARD", vm.state.value.paymentMethod?.code)
+        assertEquals(BigDecimal("25090"), vm.state.value.quote?.totalPayable?.amount)
+        assertFalse("the wallet is never priced in as a default", transfers.quoteRequests.any { it.paymentMethod == "WALLET" })
+
+        vm.selectPaymentMethod(BANK_TRANSFER); advanceUntilIdle()
+        assertEquals("BANK_TRANSFER", vm.state.value.paymentMethod?.code)
+        assertEquals(BigDecimal("25170"), vm.state.value.quote?.totalPayable?.amount)
+
+        // Their pick holds when the amount changes, even though another way is cheaper.
+        vm.onAmountChange("30000"); advanceUntilIdle()
+        assertEquals("BANK_TRANSFER", vm.state.value.paymentMethod?.code)
+        assertEquals("BANK_TRANSFER", transfers.quoteRequests.last().paymentMethod)
+    }
+
+    // --- a payment for goods to a company in China ---------------------------------------
+
+    private val goodsWanted = africa.fundaza.customer.domain.model.GoodsRequirement(
+        needed = true,
+        currency = "KES",
+        categories = listOf(africa.fundaza.customer.domain.model.GoodsCategory("APPAREL", "Apparel, bags and luggage")),
+    )
+
+    private fun SendViewModel.listShirts(price: String = "25.00", quantity: String = "400") = updateGoods {
+        it.copy(merchantName = "Shenzhen Widget Co., Ltd", tradeDate = "2026-11-05")
+            .withLine(it.lines.first().key) { line ->
+                line.copy(productName = "Cotton T-shirt", categoryCode = "APPAREL", unitPrice = price, quantity = quantity)
+            }
+    }
+
+    @Test
+    fun `a payment for goods is priced on the goods' total and waits for that price`() = runTest(main.dispatcher) {
+        transfers.goodsRequirement = goodsWanted
+        val vm = viewModel()
+        advanceUntilIdle()
+        vm.onAmountChange("25000"); advanceUntilIdle(); vm.next()
+        vm.selectRecipient(88); vm.next(); advanceUntilIdle()
+
+        assertTrue(vm.state.value.goodsNeeded)
+        assertEquals(SendingPurpose.TRADE_PAYMENT, vm.state.value.purpose)
+        vm.uploadDocument(africa.fundaza.customer.domain.model.TransferDocumentType.INVOICE, "content://docs/invoice.pdf")
+        advanceUntilIdle()
+        assertFalse(vm.state.value.canContinue)
+
+        vm.listShirts()
+        assertFalse(vm.state.value.canContinue)
+        advanceUntilIdle()
+
+        assertEquals(BigDecimal("10000.00"), transfers.quoteRequests.last().receiveAmount)
+        assertEquals(0, vm.state.value.quote!!.receiveAmount.amount.compareTo(BigDecimal("10000")))
+        assertTrue(vm.state.value.goodsPriced)
+        assertTrue(vm.state.value.canContinue)
+
+        // A new price per shirt is a new total, and a new price.
+        vm.listShirts(price = "25.50")
+        assertFalse(vm.state.value.canContinue)
+        advanceUntilIdle()
+        assertEquals(BigDecimal("10200.00"), transfers.quoteRequests.last().receiveAmount)
+        assertTrue(vm.state.value.canContinue)
+    }
+
+    @Test
+    fun `an attached invoice fills in the goods, leaving out prices in another currency`() = runTest(main.dispatcher) {
+        transfers.goodsRequirement = goodsWanted
+        val documents = FakeDocumentRepository().apply {
+            invoice = africa.fundaza.customer.domain.model.InvoiceGoods(
+                read = true,
+                merchantName = "Yiwu Bright Textiles Co., Ltd",
+                tradeDate = "2026-11-03",
+                currencyCode = "USD",
+                lines = listOf(africa.fundaza.customer.domain.model.InvoiceGoodsLine("Cotton t-shirts", "1.25", "400")),
+            )
+        }
+        val vm = SendViewModel(corridors, customers, locator, transfers, people, documents, clock)
+        advanceUntilIdle()
+        vm.onAmountChange("25000"); advanceUntilIdle(); vm.next()
+        vm.selectRecipient(88); vm.next(); advanceUntilIdle()
+
+        vm.uploadDocument(africa.fundaza.customer.domain.model.TransferDocumentType.INVOICE, "content://docs/invoice.pdf")
+        advanceUntilIdle()
+
+        val goods = vm.state.value.goods
+        assertEquals("Yiwu Bright Textiles Co., Ltd", goods.merchantName)
+        assertEquals("2026-11-03", goods.tradeDate)
+        assertEquals("Cotton t-shirts", goods.lines.single().productName)
+        assertEquals("400", goods.lines.single().quantity)
+        assertEquals("", goods.lines.single().unitPrice)
+        assertTrue(vm.state.value.invoiceNote!!.contains("priced in USD"))
+    }
+
+    @Test
+    fun `the goods are sent with the transfer`() = runTest(main.dispatcher) {
+        transfers.goodsRequirement = goodsWanted
+        val vm = viewModel()
+        advanceUntilIdle()
+        vm.onAmountChange("25000"); advanceUntilIdle(); vm.next()
+        vm.selectRecipient(88); vm.next(); advanceUntilIdle()
+        vm.uploadDocument(africa.fundaza.customer.domain.model.TransferDocumentType.INVOICE, "content://docs/invoice.pdf")
+        vm.listShirts(); advanceUntilIdle()
+        vm.next()
+
+        vm.events.test {
+            vm.confirm()
+            advanceUntilIdle()
+            assertEquals(SendEvent.Sent("TXN-1"), awaitItem())
+        }
+        assertEquals("Cotton T-shirt", transfers.sentGoods.single()!!.lines.single().productName)
+    }
+
+    @Test
+    fun `a payment to a person lists no goods`() = runTest(main.dispatcher) {
+        val vm = viewModel()
+        advanceUntilIdle()
+        vm.onAmountChange("25000"); advanceUntilIdle(); vm.next()
+        vm.selectRecipient(88); vm.next(); advanceUntilIdle()
+
+        assertFalse(vm.state.value.goodsNeeded)
+        assertNull(transfers.quoteRequests.last().receiveAmount)
+    }
 }
