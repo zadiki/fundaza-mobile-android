@@ -90,8 +90,8 @@ private val tabs = listOf(
     Tab(ProfileRoute, ProfileRoute::class, "Profile", Icons.Outlined.Person, Icons.Filled.Person),
 )
 
-/** The splash stays at least this long, so it reads as a moment rather than a flicker. */
-private const val SPLASH_MIN_MILLIS = 900L
+/** The splash animation plays at least this long before the app moves on to login or home. */
+private const val SPLASH_MIN_MILLIS = 2_000L
 
 /** How long the splash waits for home's data on a signed-in launch before home shows its own placeholders. */
 private const val SPLASH_HOME_WAIT_MILLIS = 4_000L

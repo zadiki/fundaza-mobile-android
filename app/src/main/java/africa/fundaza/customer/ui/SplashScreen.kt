@@ -4,7 +4,7 @@ import africa.fundaza.customer.R
 import africa.fundaza.customer.ui.theme.Bricolage
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -43,12 +43,13 @@ fun SplashScreen(modifier: Modifier = Modifier) {
     LaunchedEffect(Unit) {
         wordmark.animateTo(1f, tween(durationMillis = 450, delayMillis = 120, easing = FastOutSlowInEasing))
     }
-    // A slow breath, so a long wait on the network still feels alive without a spinner.
-    val breath by rememberInfiniteTransition(label = "splash").animateFloat(
-        initialValue = 1f,
-        targetValue = 0.94f,
-        animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "breath",
+    // A steady turn, so a long wait on the network still feels alive without a spinner.
+    // It starts at 0°, so the hand-over from the system splash stays invisible.
+    val spin by rememberInfiniteTransition(label = "splash").animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing)),
+        label = "spin",
     )
 
     Box(modifier.fillMaxSize().background(SplashForest), contentAlignment = Alignment.Center) {
@@ -56,7 +57,7 @@ fun SplashScreen(modifier: Modifier = Modifier) {
         Image(
             painter = painterResource(R.drawable.ic_launcher_foreground),
             contentDescription = null,
-            modifier = Modifier.size(288.dp).graphicsLayer { scaleX = breath; scaleY = breath },
+            modifier = Modifier.size(288.dp).graphicsLayer { rotationZ = spin },
         )
         Text(
             "fundaza",

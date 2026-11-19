@@ -49,6 +49,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -380,17 +382,34 @@ fun ChoiceChip(
     detail: String? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val content = when {
-        selected -> scheme.onPrimary
-        enabled -> scheme.onSurface
-        else -> scheme.onSurface.copy(alpha = 0.4f)
-    }
+    val content by androidx.compose.animation.animateColorAsState(
+        when {
+            selected -> scheme.onPrimary
+            enabled -> scheme.onSurface
+            else -> scheme.onSurface.copy(alpha = 0.4f)
+        },
+        label = "chipContent",
+    )
+    val fill by androidx.compose.animation.animateColorAsState(if (selected) scheme.primary else scheme.surfaceContainerLowest, label = "chipFill")
+    val edge by androidx.compose.animation.animateColorAsState(
+        if (selected) scheme.primary else scheme.outline.copy(alpha = if (enabled) 1f else 0.4f),
+        label = "chipEdge",
+    )
+    // A little give under the finger, and a soft settle when it becomes the choice.
+    val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by press.collectIsPressedAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        if (pressed) 0.94f else 1f,
+        androidx.compose.animation.core.spring(dampingRatio = 0.45f, stiffness = 600f),
+        label = "chipScale",
+    )
     Column(
         modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) scheme.primary else scheme.surfaceContainerLowest)
-            .border(1.dp, if (selected) scheme.primary else scheme.outline.copy(alpha = if (enabled) 1f else 0.4f), RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled, onClick = onClick)
+            .background(fill)
+            .border(1.dp, edge, RoundedCornerShape(12.dp))
+            .clickable(interactionSource = press, indication = androidx.compose.material3.ripple(), enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
         Text(text, style = MaterialTheme.typography.labelMedium, color = content)
